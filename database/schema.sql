@@ -98,14 +98,192 @@ CREATE TABLE prescriptions (
         REFERENCES patient(patient_id)
         ON DELETE CASCADE
 );
+
 CREATE TABLE blogposts (
     blog_id SERIAL PRIMARY KEY,
-    patient_id INT NOT NULL,
     title VARCHAR(200) NOT NULL,
     feel TEXT,
-    post_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    post_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE doctor_hospital (
+    doctor_id INT NOT NULL,
+    hospital_id INT NOT NULL,
+    since_date DATE NOT NULL,
+
+    PRIMARY KEY (doctor_id, hospital_id),
+
+    FOREIGN KEY (doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (hospital_id)
+        REFERENCES hospitals(hospital_id)
+        ON DELETE CASCADE,
+
+    CHECK (since_date <= CURRENT_DATE)
+);
+CREATE TABLE doctor_cancer_specialization (
+    doctor_id INT NOT NULL,
+    cancer_id INT NOT NULL,
+
+    PRIMARY KEY (doctor_id, cancer_id),
+
+    FOREIGN KEY (doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (cancer_id)
+        REFERENCES cancers(cancer_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE cancer_medicine (
+    cancer_id INT NOT NULL,
+    medicine_id INT NOT NULL,
+
+    PRIMARY KEY (cancer_id, medicine_id),
+
+    FOREIGN KEY (cancer_id)
+        REFERENCES cancers(cancer_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (medicine_id)
+        REFERENCES medicines(medicine_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE prescription_medicine (
+    prescription_id INT NOT NULL,
+    medicine_id INT NOT NULL,
+    dosage VARCHAR(100) NOT NULL,
+    description TEXT,
+    PRIMARY KEY (prescription_id, medicine_id),
+
+    FOREIGN KEY (prescription_id)
+        REFERENCES prescriptions(prescription_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (medicine_id)
+        REFERENCES medicines(medicine_id)
+        ON DELETE RESTRICT
+);
+
+CREATE TABLE patient_stage_diagnosis (
+    diagnosis_id SERIAL PRIMARY KEY,
+    patient_id INT NOT NULL,
+    cancer_id INT NOT NULL,
+    stage_no INT NOT NULL,
+    diagnosis_date DATE NOT NULL,
+    FOREIGN KEY (patient_id)
+        REFERENCES patient(patient_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (cancer_id, stage_no)
+        REFERENCES stages(cancer_id, stage_no)
+        ON DELETE RESTRICT
+);
+CREATE TABLE doctor_referral (
+    referring_doctor_id INT NOT NULL,
+    referred_doctor_id INT NOT NULL,
+
+    PRIMARY KEY (referring_doctor_id, referred_doctor_id),
+
+    FOREIGN KEY (referring_doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (referred_doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE,
+
+    CHECK (referring_doctor_id <> referred_doctor_id)
+);
+CREATE TABLE admin_doctor_assignment (
+    admin_id INT NOT NULL,
+    doctor_id INT NOT NULL,
+    assignment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+
+    PRIMARY KEY (admin_id, doctor_id),
+
+    FOREIGN KEY (admin_id)
+        REFERENCES admins(admin_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE patient_blogpost (
+    patient_id INT NOT NULL,
+    blog_id INT NOT NULL,
+    write_date DATE NOT NULL DEFAULT CURRENT_DATE,
+
+    PRIMARY KEY (patient_id, blog_id),
 
     FOREIGN KEY (patient_id)
         REFERENCES patient(patient_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (blog_id)
+        REFERENCES blogposts(blog_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE hospital_cancer (
+    hospital_id INT NOT NULL,
+    cancer_id INT NOT NULL,
+
+    PRIMARY KEY (hospital_id, cancer_id),
+
+    FOREIGN KEY (hospital_id)
+        REFERENCES hospitals(hospital_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (cancer_id)
+        REFERENCES cancers(cancer_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE doctor_stage (
+    doctor_id INT NOT NULL,
+    cancer_id INT NOT NULL,
+    stage_no INT NOT NULL,
+
+    PRIMARY KEY (doctor_id, cancer_id, stage_no),
+
+    FOREIGN KEY (doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (cancer_id, stage_no)
+        REFERENCES stages(cancer_id, stage_no)
+        ON DELETE CASCADE
+);
+CREATE TABLE blogpost_doctor (
+    blog_id INT NOT NULL,
+    doctor_id INT NOT NULL,
+    rating NUMERIC(2,1) NOT NULL
+        CHECK (rating >= 0 AND rating <= 5),
+
+    PRIMARY KEY (blog_id, doctor_id),
+
+    FOREIGN KEY (blog_id)
+        REFERENCES blogposts(blog_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (doctor_id)
+        REFERENCES doctors(doctor_id)
+        ON DELETE CASCADE
+);
+CREATE TABLE blogpost_hospital (
+    blog_id INT NOT NULL,
+    hospital_id INT NOT NULL,
+    rating NUMERIC(2,1) NOT NULL
+        CHECK (rating >= 0 AND rating <= 5),
+
+    PRIMARY KEY (blog_id, hospital_id),
+
+    FOREIGN KEY (blog_id)
+        REFERENCES blogposts(blog_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (hospital_id)
+        REFERENCES hospitals(hospital_id)
         ON DELETE CASCADE
 );
