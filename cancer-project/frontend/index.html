@@ -1,13 +1,23 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f766e" />
-    <title>CancerCare</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0d5357"><title>CancerCare | Care, clarity & connection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="announcement">✦ &nbsp; A calmer way to find cancer care in Dhaka <a href="#care">Explore care options →</a></div>
+  <header><nav class="container"><a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a><button class="menu" aria-label="Menu">☰</button><div class="links"><a href="#care">Find care</a><a href="#learn">Learn</a><a href="#stories">Stories</a><a href="#about">About us</a></div><button id="openLogin" class="login">◌ &nbsp; Sign in</button></nav></header>
+  <main id="home">
+    <section class="hero container"><div><p class="eyebrow">— &nbsp; CANCER CARE, MADE MORE HUMAN</p><h1>You don't have to navigate <em>this</em> alone.</h1><p class="intro">A trusted starting point for finding the right cancer specialists, hospitals and clear health information—when every decision matters.</p><div class="actions"><a class="button" href="#care">Find your care team <b>→</b></a><a class="inline" href="#learn">Explore cancer guides ↗</a></div><p class="reassure">✦ &nbsp; <span><b>Support begins with clarity.</b><br>Browse verified care options at your pace.</span></p></div><div class="hero-art"><div class="sun"></div><div class="leaf l1"></div><div class="leaf l2"></div><div class="doctor"><div class="head"></div><div class="hair"></div><div class="shirt"></div><div class="coat"></div></div><div class="floating-card">♡ <span><small>Your care, connected</small><b>One trusted place<br>to begin</b></span></div><div class="badge">✦ <span><b>Care with confidence</b><small>Built around your needs</small></span></div></div></section>
+    <section class="statbar"><div id="stats" class="container"><div><b>—</b><span>Care hospitals</span></div><div><b>—</b><span>Specialist doctors</span></div><div><b>—</b><span>Cancer guides</span></div><div><b>—</b><span>Community stories</span></div></div></section>
+    <section id="care" class="section container"><div class="heading"><div><p class="eyebrow">— &nbsp; FIND CARE</p><h2>Care that meets you where you are.</h2></div><p>Search our network of cancer hospitals and professionals across Dhaka.</p></div><div class="finder"><div class="finder-copy"><p class="tiny">START YOUR SEARCH</p><h3>What are you looking for?</h3><p>Find a hospital or specialist using our directory.</p><div class="tabs"><button class="active" data-search="hospital">Hospitals</button><button data-search="doctor">Doctors</button></div><div class="search"><span>⌕</span><input id="directorySearch" placeholder="Search by hospital name or area"><button id="searchButton">→</button></div></div><div class="results" id="directoryResults"><p>Loading care options…</p></div></div></section>
+    <section id="learn" class="section soft"><div class="container"><div class="heading"><div><p class="eyebrow">— &nbsp; LEARN & PREPARE</p><h2>Clear information. Gentle guidance.</h2></div><a class="inline" href="#learn">View all guides →</a></div><div id="guideGrid" class="guides"><p>Loading cancer guides…</p></div><p class="note">Information on CancerCare supports—not replaces—the advice of your medical team.</p></div></section>
+    <section id="stories" class="section container"><div class="heading"><div><p class="eyebrow">— &nbsp; FROM OUR COMMUNITY</p><h2>Shared words can make a world of difference.</h2></div><a class="inline" href="#stories">Read all stories →</a></div><div id="storyGrid" class="stories"><p>Loading stories…</p></div></section>
+    <section class="support container"><div><p class="eyebrow">— &nbsp; HERE FOR THE WHOLE JOURNEY</p><h2>A little support can change everything.</h2><p>Whether you're newly diagnosed, in treatment, or supporting someone you love, CancerCare helps you take the next step with confidence.</p><a class="button warm" href="#care">Find care near you <b>→</b></a></div><div class="support-shape"><div>♡<span>With you</span></div></div></section>
+  </main>
+  <footer id="about"><div class="container footer"><div><a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a><p>Bringing clarity, connection and compassionate support to cancer care.</p></div><div><b>Explore</b><a href="#care">Find care</a><a href="#learn">Cancer guides</a><a href="#stories">Community stories</a></div><div><b>For you</b><button data-role="Patient">Patient sign in</button><button data-role="Doctor">Doctor sign in</button><button data-role="Admin">Admin access</button></div><div><b>Need help?</b><p>Contact your hospital directly for urgent medical needs.</p></div></div><div class="container copyright">© 2026 CancerCare. Built for more informed care.</div></footer>
+  <dialog id="loginDialog"><button class="close">×</button><div class="dialog-icon">✦</div><p class="eyebrow">— &nbsp; SECURE ACCESS</p><h2>Welcome to CancerCare</h2><p>Choose the space designed for you.</p><div class="roles"><button data-role="Patient">♡ <span><b>Patient</b><small>Manage your care journey</small></span><strong>→</strong></button><button data-role="Doctor">✚ <span><b>Doctor</b><small>Access clinical workspace</small></span><strong>→</strong></button><button data-role="Admin">◈ <span><b>Hospital admin</b><small>Manage your care network</small></span><strong>→</strong></button></div><p class="dialog-note">Access is provided by your hospital or care team.</p></dialog>
+  <dialog id="detailDialog"><button class="close">×</button><div id="detailContent"></div></dialog><div id="toast"></div><script src="app.js"></script>
+</body></html>
