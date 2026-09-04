@@ -1,12 +1,70 @@
-const $=s=>document.querySelector(s),api="/api";let active="hospital";
-const esc=(v="")=>String(v).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#039;",'"':"&quot;"}[c]));
-async function get(url){const r=await fetch(api+url);if(!r.ok)throw Error();return r.json()}
-function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3500)}
-async function overview(){try{const d=await get("/overview"),x=[[d.hospitals,"Care hospitals"],[d.doctors,"Specialist doctors"],[d.cancer_types,"Cancer guides"],[d.stories,"Community stories"]];$("#stats").innerHTML=x.map(a=>`<div><b>${a[0]}+</b><span>${a[1]}</span></div>`).join("")}catch{}}
-function hospitalCards(x){return x.length?x.slice(0,4).map(h=>`<button class="result" data-hospital="${h.hospital_id}"><i>✦</i><span><b>${esc(h.hospital_name)}</b><small>${esc(h.area)}, ${esc(h.district)} · ${esc(h.hospital_type)}</small></span><strong>→</strong></button>`).join(""):`<p>No hospitals match your search. Try another area.</p>`}
-function doctorCards(x){return x.length?x.slice(0,4).map(d=>`<article class="result doctor-result"><i>${esc(d.doctor_name[0])}</i><span><b>Dr. ${esc(d.doctor_name)}</b><small>${esc(d.specialties)} · ${esc(d.area)}</small></span><strong>${d.experience_years||""}${d.experience_years?" yrs":""}</strong></article>`).join(""):`<p>No doctors match your search. Try another name or area.</p>`}
-async function directory(q=""){const el=$("#directoryResults");el.innerHTML="<p>Finding care options…</p>";try{const x=await get(`/${active==="hospital"?"hospitals":"doctors"}?search=${encodeURIComponent(q)}`);el.innerHTML=active==="hospital"?hospitalCards(x):doctorCards(x)}catch{el.innerHTML="<p>We could not reach the care directory. Ensure the server and database are running.</p>"}}
-async function guides(){try{const x=await get("/cancers"),sym=["◌","✦","◈","♡"];$("#guideGrid").innerHTML=x.slice(0,6).map((g,i)=>`<article class="guide"><i class="g${i%4}">${sym[i%4]}</i><div><small>UNDERSTANDING CANCER</small><h3>${esc(g.cancer_name)}</h3><p>${esc(g.causes||"Learn about this cancer type and prepare for care.")}</p><a href="#care">Explore guide →</a></div></article>`).join("")}catch{$("#guideGrid").innerHTML="<p>Guides will appear once the database is connected.</p>"}}
-async function stories(){try{const x=await get("/blogs");$("#storyGrid").innerHTML=x.map((s,i)=>`<article class="story"><div class="story-head s${i}">${["“","✦","♡"][i]}</div><div><small>COMMUNITY STORY</small><h3>${esc(s.title)}</h3><p>${esc((s.feel||"A reflection from the CancerCare community.").slice(0,155))}</p><a href="#stories">Read story →</a></div></article>`).join("")}catch{$("#storyGrid").innerHTML="<p>Stories will appear once the database is connected.</p>"}}
-async function hospital(id){const d=$("#detailDialog"),c=$("#detailContent");d.showModal();c.innerHTML="<p>Loading hospital details…</p>";try{const h=await get(`/hospitals/${id}`);c.innerHTML=`<p class="eyebrow">— &nbsp; HOSPITAL PROFILE</p><h2>${esc(h.hospital_name)}</h2><p class="muted">${esc(h.hospital_type)} hospital · ${esc(h.area)}, ${esc(h.district)}</p><div class="details"><div><small>ADDRESS</small><p>${esc(h.address)}</p></div><div><small>CONTACT</small><p>${esc(h.phone)}<br>${esc(h.email||"Contact hospital directly")}</p></div><div><small>CAPACITY</small><p>${esc(h.bed_capacity)} beds</p></div><div><small>ESTABLISHED</small><p>${esc(h.established_year)}</p></div></div>${h.website?`<a class="button" target="_blank" rel="noopener" href="${esc(h.website)}">Visit hospital website ↗</a>`:""}`}catch{c.innerHTML="<h2>Hospital details unavailable</h2><p>Please try again in a moment.</p>"}}
-$("#openLogin").onclick=()=>$("#loginDialog").showModal();document.querySelectorAll(".close").forEach(b=>b.onclick=()=>b.closest("dialog").close());document.querySelectorAll("[data-role]").forEach(b=>b.onclick=()=>{ $("#loginDialog").close();toast(`${b.dataset.role} access is managed by your hospital care team.`)});document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{active=b.dataset.search;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("active",x===b));$("#directorySearch").placeholder=active==="hospital"?"Search by hospital name or area":"Search doctor name or area";directory($("#directorySearch").value)});$("#searchButton").onclick=()=>directory($("#directorySearch").value);$("#directorySearch").onkeydown=e=>e.key==="Enter"&&directory(e.target.value);$("#directoryResults").onclick=e=>{const x=e.target.closest("[data-hospital]");if(x)hospital(x.dataset.hospital)};$(".menu").onclick=()=>$(".links").classList.toggle("show");overview();directory();guides();stories();
+const $ = (selector) => document.querySelector(selector);
+const api = "/api";
+let activeDirectory = "hospital";
+let registering = false;
+
+const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" }[char]));
+
+async function request(endpoint, options = {}) {
+  const response = await fetch(`${api}${endpoint}`, { headers: { "Content-Type": "application/json" }, ...options });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "Something went wrong. Please try again.");
+  return body;
+}
+
+function showToast(message) { const toast = $("#toast"); toast.textContent = message; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 3500); }
+
+async function loadOverview() {
+  try { const data = await request("/overview"); $("#stats").innerHTML = [[data.hospitals, "Care hospitals"], [data.doctors, "Specialist doctors"], [data.cancer_types, "Cancer guides"], [data.stories, "Community stories"]].map(([count, label]) => `<div><b>${count}+</b><span>${label}</span></div>`).join(""); } catch { showToast("Database summary is unavailable. Check that PostgreSQL is running."); }
+}
+
+function hospitalCards(items) {
+  return items.length ? items.slice(0, 4).map((item) => `<button class="result" data-hospital="${item.hospital_id}"><i>+</i><span><b>${escapeHtml(item.hospital_name)}</b><small>${escapeHtml(item.area)}, ${escapeHtml(item.district)} | ${escapeHtml(item.hospital_type)}</small></span><strong>&rarr;</strong></button>`).join("") : "<p>No hospitals match your search. Try another area.</p>";
+}
+
+function doctorCards(items) {
+  return items.length ? items.slice(0, 4).map((item) => `<article class="result doctor-result"><i>${escapeHtml(item.doctor_name.charAt(0))}</i><span><b>${escapeHtml(item.doctor_name)}</b><small>${escapeHtml(item.specialties)} | ${escapeHtml(item.area)}</small></span><strong>${item.experience_years || ""}${item.experience_years ? " yrs" : ""}</strong></article>`).join("") : "<p>No doctors match your search. Try another name or area.</p>";
+}
+
+async function loadDirectory(query = "") {
+  const results = $("#directoryResults"); results.innerHTML = "<p>Finding care options...</p>";
+  try { const items = await request(`/${activeDirectory === "hospital" ? "hospitals" : "doctors"}?search=${encodeURIComponent(query.trim())}`); results.innerHTML = activeDirectory === "hospital" ? hospitalCards(items) : doctorCards(items); }
+  catch (error) { results.innerHTML = `<p>${escapeHtml(error.message)}</p>`; }
+}
+
+async function loadGuides() {
+  try { const guides = await request("/cancers"); const symbols = ["O", "+", "*", "#"]; $("#guideGrid").innerHTML = guides.slice(0, 6).map((guide, index) => `<article class="guide"><i class="g${index % 4}">${symbols[index % 4]}</i><div><small>UNDERSTANDING CANCER</small><h3>${escapeHtml(guide.cancer_name)}</h3><p>${escapeHtml(guide.causes || "Learn about this cancer type and prepare for care.")}</p><a href="#care">Find relevant care &rarr;</a></div></article>`).join(""); }
+  catch (error) { $("#guideGrid").innerHTML = `<p>${escapeHtml(error.message)}</p>`; }
+}
+
+async function loadStories() {
+  try { const stories = await request("/blogs"); $("#storyGrid").innerHTML = stories.map((story, index) => `<article class="story"><div class="story-head s${index}">${["&ldquo;", "+", "&hearts;"][index]}</div><div><small>COMMUNITY STORY</small><h3>${escapeHtml(story.title)}</h3><p>${escapeHtml((story.feel || "A reflection from the CancerCare community.").slice(0, 155))}</p><a href="#stories">Read story &rarr;</a></div></article>`).join(""); }
+  catch (error) { $("#storyGrid").innerHTML = `<p>${escapeHtml(error.message)}</p>`; }
+}
+
+async function openHospital(id) {
+  const dialog = $("#detailDialog"), content = $("#detailContent"); dialog.showModal(); content.innerHTML = "<p>Loading hospital details...</p>";
+  try { const hospital = await request(`/hospitals/${id}`); content.innerHTML = `<p class="eyebrow">HOSPITAL PROFILE</p><h2>${escapeHtml(hospital.hospital_name)}</h2><p class="muted">${escapeHtml(hospital.hospital_type)} hospital | ${escapeHtml(hospital.area)}, ${escapeHtml(hospital.district)}</p><div class="details"><div><small>ADDRESS</small><p>${escapeHtml(hospital.address)}</p></div><div><small>CONTACT</small><p>${escapeHtml(hospital.phone)}<br>${escapeHtml(hospital.email || "Contact hospital directly")}</p></div><div><small>CAPACITY</small><p>${escapeHtml(hospital.bed_capacity)} beds</p></div><div><small>ESTABLISHED</small><p>${escapeHtml(hospital.established_year)}</p></div></div>${hospital.website ? `<a class="button" target="_blank" rel="noopener" href="${escapeHtml(hospital.website)}">Visit hospital website &nearr;</a>` : ""}`; }
+  catch (error) { content.innerHTML = `<h2>Hospital details unavailable</h2><p>${escapeHtml(error.message)}</p>`; }
+}
+
+function openAuth(role) {
+  registering = false; $("#loginDialog").showModal(); $("#rolePicker").hidden = true; $("#authForm").hidden = false;
+  $("#authRole").value = role; $("#authTitle").textContent = `${role} sign in`; $("#authSubtitle").textContent = "Enter your registered mobile number and password.";
+  $("#registrationFields").hidden = true; $("#registerToggle").hidden = role !== "Patient"; $("#authSubmit").innerHTML = "Sign in <b>&rarr;</b>"; $("#authError").textContent = "";
+}
+
+function resetAuth() { $("#rolePicker").hidden = false; $("#authForm").hidden = true; $("#authError").textContent = ""; }
+
+$("#openLogin").addEventListener("click", () => { $("#loginDialog").showModal(); resetAuth(); });
+document.querySelectorAll(".close").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+document.querySelectorAll("[data-role]").forEach((button) => button.addEventListener("click", () => openAuth(button.dataset.role)));
+$("#backToRoles").addEventListener("click", resetAuth);
+$("#registerToggle").addEventListener("click", () => { registering = !registering; $("#registrationFields").hidden = !registering; $("#authTitle").textContent = registering ? "Create a patient account" : "Patient sign in"; $("#authSubtitle").textContent = registering ? "Your details create a secure patient profile." : "Enter your registered mobile number and password."; $("#authSubmit").innerHTML = registering ? "Create account <b>&rarr;</b>" : "Sign in <b>&rarr;</b>"; $("#registerToggle").textContent = registering ? "I already have an account" : "Create a patient account"; });
+$("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const error = $("#authError"), submit = $("#authSubmit"); error.textContent = ""; submit.disabled = true; submit.textContent = registering ? "Creating account..." : "Signing in..."; try { const payload = registering ? { firstName: $("#firstName").value, lastName: $("#lastName").value, contact: $("#authContact").value, password: $("#authPassword").value, address: $("#address").value, district: $("#district").value, area: $("#area").value, gender: $("#gender").value } : { contact: $("#authContact").value, password: $("#authPassword").value, role: $("#authRole").value }; const data = await request(registering ? "/auth/register" : "/auth/login", { method: "POST", body: JSON.stringify(payload) }); localStorage.setItem("cancerCareUser", JSON.stringify(data.user)); $("#loginDialog").close(); showToast(`Welcome, ${data.user.name}. You are signed in as ${data.user.role}.`); } catch (err) { error.textContent = err.message; } finally { submit.disabled = false; submit.innerHTML = registering ? "Create account <b>&rarr;</b>" : "Sign in <b>&rarr;</b>"; } });
+document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => { activeDirectory = button.dataset.search; document.querySelectorAll(".tabs button").forEach((tab) => tab.classList.toggle("active", tab === button)); $("#directorySearch").placeholder = activeDirectory === "hospital" ? "Search by hospital name or area" : "Search doctor name or area"; loadDirectory($("#directorySearch").value); }));
+$("#searchButton").addEventListener("click", () => loadDirectory($("#directorySearch").value));
+$("#directorySearch").addEventListener("keydown", (event) => { if (event.key === "Enter") loadDirectory(event.target.value); });
+$("#directoryResults").addEventListener("click", (event) => { const card = event.target.closest("[data-hospital]"); if (card) openHospital(card.dataset.hospital); });
+$(".menu").addEventListener("click", () => $(".links").classList.toggle("show"));
+loadOverview(); loadDirectory(); loadGuides(); loadStories();
