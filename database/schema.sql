@@ -13,6 +13,9 @@ CREATE TABLE patient (
     gender VARCHAR(10),
     blood_group VARCHAR(5),
     emergency_contact VARCHAR(15),
+    address VARCHAR(255) NOT NULL,
+    district VARCHAR(100) NOT NULL,
+    area VARCHAR(100) NOT NULL, 
 
     FOREIGN KEY (patient_id)
         REFERENCES users(user_id)
