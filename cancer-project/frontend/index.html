@@ -1,23 +1,344 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0d5357"><title>CancerCare | Care, clarity & connection</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <div class="announcement">✦ &nbsp; A calmer way to find cancer care in Dhaka <a href="#care">Explore care options →</a></div>
-  <header><nav class="container"><a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a><button class="menu" aria-label="Menu">☰</button><div class="links"><a href="#care">Find care</a><a href="#learn">Learn</a><a href="#stories">Stories</a><a href="#about">About us</a></div><button id="openLogin" class="login">◌ &nbsp; Sign in</button></nav></header>
-  <main id="home">
-    <section class="hero container"><div><p class="eyebrow">— &nbsp; CANCER CARE, MADE MORE HUMAN</p><h1>You don't have to navigate <em>this</em> alone.</h1><p class="intro">A trusted starting point for finding the right cancer specialists, hospitals and clear health information—when every decision matters.</p><div class="actions"><a class="button" href="#care">Find your care team <b>→</b></a><a class="inline" href="#learn">Explore cancer guides ↗</a></div><p class="reassure">✦ &nbsp; <span><b>Support begins with clarity.</b><br>Browse verified care options at your pace.</span></p></div><div class="hero-art"><div class="sun"></div><div class="leaf l1"></div><div class="leaf l2"></div><div class="doctor"><div class="head"></div><div class="hair"></div><div class="shirt"></div><div class="coat"></div></div><div class="floating-card">♡ <span><small>Your care, connected</small><b>One trusted place<br>to begin</b></span></div><div class="badge">✦ <span><b>Care with confidence</b><small>Built around your needs</small></span></div></div></section>
-    <section class="statbar"><div id="stats" class="container"><div><b>—</b><span>Care hospitals</span></div><div><b>—</b><span>Specialist doctors</span></div><div><b>—</b><span>Cancer guides</span></div><div><b>—</b><span>Community stories</span></div></div></section>
-    <section id="care" class="section container"><div class="heading"><div><p class="eyebrow">— &nbsp; FIND CARE</p><h2>Care that meets you where you are.</h2></div><p>Search our network of cancer hospitals and professionals across Dhaka.</p></div><div class="finder"><div class="finder-copy"><p class="tiny">START YOUR SEARCH</p><h3>What are you looking for?</h3><p>Find a hospital or specialist using our directory.</p><div class="tabs"><button class="active" data-search="hospital">Hospitals</button><button data-search="doctor">Doctors</button></div><div class="search"><span>⌕</span><input id="directorySearch" placeholder="Search by hospital name or area"><button id="searchButton">→</button></div></div><div class="results" id="directoryResults"><p>Loading care options…</p></div></div></section>
-    <section id="learn" class="section soft"><div class="container"><div class="heading"><div><p class="eyebrow">— &nbsp; LEARN & PREPARE</p><h2>Clear information. Gentle guidance.</h2></div><a class="inline" href="#learn">View all guides →</a></div><div id="guideGrid" class="guides"><p>Loading cancer guides…</p></div><p class="note">Information on CancerCare supports—not replaces—the advice of your medical team.</p></div></section>
-    <section id="stories" class="section container"><div class="heading"><div><p class="eyebrow">— &nbsp; FROM OUR COMMUNITY</p><h2>Shared words can make a world of difference.</h2></div><a class="inline" href="#stories">Read all stories →</a></div><div id="storyGrid" class="stories"><p>Loading stories…</p></div></section>
-    <section class="support container"><div><p class="eyebrow">— &nbsp; HERE FOR THE WHOLE JOURNEY</p><h2>A little support can change everything.</h2><p>Whether you're newly diagnosed, in treatment, or supporting someone you love, CancerCare helps you take the next step with confidence.</p><a class="button warm" href="#care">Find care near you <b>→</b></a></div><div class="support-shape"><div>♡<span>With you</span></div></div></section>
-  </main>
-  <footer id="about"><div class="container footer"><div><a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a><p>Bringing clarity, connection and compassionate support to cancer care.</p></div><div><b>Explore</b><a href="#care">Find care</a><a href="#learn">Cancer guides</a><a href="#stories">Community stories</a></div><div><b>For you</b><button data-role="Patient">Patient sign in</button><button data-role="Doctor">Doctor sign in</button><button data-role="Admin">Admin access</button></div><div><b>Need help?</b><p>Contact your hospital directly for urgent medical needs.</p></div></div><div class="container copyright">© 2026 CancerCare. Built for more informed care.</div></footer>
-  <dialog id="loginDialog"><button class="close" type="button">&times;</button><div class="dialog-icon">+</div><p class="eyebrow">SECURE ACCESS</p><h2 id="authTitle">Welcome to CancerCare</h2><p id="authSubtitle">Choose the space designed for you.</p><div class="roles" id="rolePicker"><button type="button" data-role="Patient">Patient <span><b>Patient</b><small>Manage your care journey</small></span><strong>&rarr;</strong></button><button type="button" data-role="Doctor">Doctor <span><b>Doctor</b><small>Access clinical workspace</small></span><strong>&rarr;</strong></button><button type="button" data-role="Admin">Admin <span><b>Hospital admin</b><small>Manage your care network</small></span><strong>&rarr;</strong></button></div><form id="authForm" hidden><input id="authRole" type="hidden"><label>Mobile number<input id="authContact" required placeholder="01XXXXXXXXX" autocomplete="tel"></label><label>Password<input id="authPassword" required type="password" minlength="8" autocomplete="current-password"></label><div id="registrationFields" hidden><label>First name<input id="firstName" autocomplete="given-name"></label><label>Last name<input id="lastName" autocomplete="family-name"></label><label>Address<input id="address" autocomplete="street-address"></label><label>District<input id="district" value="Dhaka"></label><label>Area<input id="area" placeholder="e.g. Dhanmondi"></label><label>Gender<select id="gender"><option value="">Prefer not to say</option><option>Female</option><option>Male</option><option>Other</option></select></label></div><p id="authError" class="auth-error" role="alert"></p><button id="authSubmit" class="button" type="submit">Sign in <b>&rarr;</b></button><button id="registerToggle" class="form-link" type="button">Create a patient account</button><button id="backToRoles" class="form-link" type="button">Choose another role</button></form><p class="dialog-note">Seed accounts: use their listed mobile number and <b>CancerCare2026</b> for the first sign-in.</p></dialog>
-  <dialog id="detailDialog"><button class="close">×</button><div id="detailContent"></div></dialog><div id="toast"></div><script src="app.js"></script>
-</body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0d5357" />
+    <title>CancerCare | Care, clarity & connection</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      .dashboard-view[hidden] {
+        display: none;
+      }
+      .dashboard {
+        padding-top: 72px;
+        padding-bottom: 120px;
+        min-height: 650px;
+      }
+      .dashboard-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 32px;
+        padding-bottom: 56px;
+        border-bottom: 1px solid #dce8e2;
+      }
+      .dashboard-top h1 {
+        max-width: 720px;
+        margin: 12px 0 18px;
+      }
+      .dashboard-top .intro {
+        max-width: 560px;
+      }
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        padding-top: 36px;
+      }
+      .dashboard-card {
+        display: block;
+        min-height: 230px;
+        padding: 28px;
+        border: 1px solid #dce8e2;
+        background: #f7fbf8;
+        color: var(--ink);
+        text-decoration: none;
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+      .dashboard-card:hover {
+        transform: translateY(-4px);
+        border-color: var(--green);
+        box-shadow: 0 14px 30px rgba(13, 83, 87, 0.1);
+      }
+      .dashboard-card span {
+        color: var(--coral);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+      }
+      .dashboard-card h2 {
+        margin: 22px 0 10px;
+      }
+      .dashboard-card p {
+        min-height: 48px;
+        color: #537073;
+      }
+      .dashboard-card strong {
+        display: block;
+        margin-top: 24px;
+        color: var(--green);
+      }
+      @media (max-width: 760px) {
+        .dashboard-top {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .dashboard-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="announcement">
+      ✦ &nbsp; A calmer way to find cancer care in Dhaka
+      <a href="#care">Explore care options →</a>
+    </div>
+    <header>
+      <nav class="container">
+        <a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a
+        ><button class="menu" aria-label="Menu">☰</button>
+        <div class="links">
+          <a href="#care">Find care</a><a href="#learn">Learn</a
+          ><a href="#stories">Stories</a><a href="#about">About us</a>
+        </div>
+        <button id="openLogin" class="login">◌ &nbsp; Sign in</button>
+      </nav>
+    </header>
+    <main id="home">
+      <section class="hero container">
+        <div>
+          <p class="eyebrow">— &nbsp; CANCER CARE, MADE MORE HUMAN</p>
+          <h1>You don't have to navigate <em>this</em> alone.</h1>
+          <p class="intro">
+            A trusted starting point for finding the right cancer specialists,
+            hospitals and clear health information—when every decision matters.
+          </p>
+          <div class="actions">
+            <a class="button" href="#care">Find your care team <b>→</b></a
+            ><a class="inline" href="#learn">Explore cancer guides ↗</a>
+          </div>
+          <p class="reassure">
+            ✦ &nbsp;
+            <span
+              ><b>Support begins with clarity.</b><br />Browse verified care
+              options at your pace.</span
+            >
+          </p>
+        </div>
+        <div class="hero-art">
+          <div class="sun"></div>
+          <div class="leaf l1"></div>
+          <div class="leaf l2"></div>
+          <div class="doctor">
+            <div class="head"></div>
+            <div class="hair"></div>
+            <div class="shirt"></div>
+            <div class="coat"></div>
+          </div>
+          <div class="floating-card">
+            ♡
+            <span
+              ><small>Your care, connected</small
+              ><b>One trusted place<br />to begin</b></span
+            >
+          </div>
+          <div class="badge">
+            ✦
+            <span
+              ><b>Care with confidence</b
+              ><small>Built around your needs</small></span
+            >
+          </div>
+        </div>
+      </section>
+      <section class="statbar">
+        <div id="stats" class="container">
+          <div><b>—</b><span>Care hospitals</span></div>
+          <div><b>—</b><span>Specialist doctors</span></div>
+          <div><b>—</b><span>Cancer guides</span></div>
+          <div><b>—</b><span>Community stories</span></div>
+        </div>
+      </section>
+      <section id="care" class="section container">
+        <div class="heading">
+          <div>
+            <p class="eyebrow">— &nbsp; FIND CARE</p>
+            <h2>Care that meets you where you are.</h2>
+          </div>
+          <p>
+            Search our network of cancer hospitals and professionals across
+            Dhaka.
+          </p>
+        </div>
+        <div class="finder">
+          <div class="finder-copy">
+            <p class="tiny">START YOUR SEARCH</p>
+            <h3>What are you looking for?</h3>
+            <p>Find a hospital or specialist using our directory.</p>
+            <div class="tabs">
+              <button class="active" data-search="hospital">Hospitals</button
+              ><button data-search="doctor">Doctors</button>
+            </div>
+            <div class="search">
+              <span>⌕</span
+              ><input
+                id="directorySearch"
+                placeholder="Search by hospital name or area"
+              /><button id="searchButton">→</button>
+            </div>
+          </div>
+          <div class="results" id="directoryResults">
+            <p>Loading care options…</p>
+          </div>
+        </div>
+      </section>
+      <section id="learn" class="section soft">
+        <div class="container">
+          <div class="heading">
+            <div>
+              <p class="eyebrow">— &nbsp; LEARN & PREPARE</p>
+              <h2>Clear information. Gentle guidance.</h2>
+            </div>
+            <a class="inline" href="#learn">View all guides →</a>
+          </div>
+          <div id="guideGrid" class="guides"><p>Loading cancer guides…</p></div>
+          <h3 class="learn-subheading">Doctor-authored learning articles</h3>
+          <div id="learnArticleGrid" class="learn-articles"><p>Loading doctor articles...</p></div>
+          <p class="note">
+            Information on CancerCare supports—not replaces—the advice of your
+            medical team.
+          </p>
+        </div>
+      </section>
+      <section id="stories" class="section container">
+        <div class="heading">
+          <div>
+            <p class="eyebrow">— &nbsp; FROM OUR COMMUNITY</p>
+            <h2>Shared words can make a world of difference.</h2>
+          </div>
+          <a class="inline" href="#stories">Read all stories →</a>
+        </div>
+        <div id="storyGrid" class="stories"><p>Loading stories…</p></div>
+      </section>
+      <section class="support container">
+        <div>
+          <p class="eyebrow">— &nbsp; HERE FOR THE WHOLE JOURNEY</p>
+          <h2>A little support can change everything.</h2>
+          <p>
+            Whether you're newly diagnosed, in treatment, or supporting someone
+            you love, CancerCare helps you take the next step with confidence.
+          </p>
+          <a class="button warm" href="#care">Find care near you <b>→</b></a>
+        </div>
+        <div class="support-shape">
+          <div>♡<span>With you</span></div>
+        </div>
+      </section>
+    </main>
+    <main id="dashboardView" class="dashboard-view" hidden></main>
+    <footer id="about">
+      <div class="container footer">
+        <div>
+          <a class="brand" href="#home"><i>✦</i>Cancer<span>Care</span></a>
+          <p>
+            Bringing clarity, connection and compassionate support to cancer
+            care.
+          </p>
+        </div>
+        <div>
+          <b>Explore</b><a href="#care">Find care</a
+          ><a href="#learn">Cancer guides</a
+          ><a href="#stories">Community stories</a>
+        </div>
+        <div>
+          <b>For you</b><button data-role="Patient">Patient sign in</button
+          ><button data-role="Doctor">Doctor sign in</button
+          ><button data-role="Admin">Admin access</button>
+        </div>
+        <div>
+          <b>Need help?</b>
+          <p>Contact your hospital directly for urgent medical needs.</p>
+        </div>
+      </div>
+      <div class="container copyright">
+        © 2026 CancerCare. Built for more informed care.
+      </div>
+    </footer>
+    <dialog id="loginDialog">
+      <button class="close" type="button">&times;</button>
+      <div class="dialog-icon">+</div>
+      <p class="eyebrow">SECURE ACCESS</p>
+      <h2 id="authTitle">Welcome to CancerCare</h2>
+      <p id="authSubtitle">Choose the space designed for you.</p>
+      <div class="roles" id="rolePicker">
+        <button type="button" data-role="Patient">
+          Patient
+          <span><b>Patient</b><small>Manage your care journey</small></span
+          ><strong>&rarr;</strong></button
+        ><button type="button" data-role="Doctor">
+          Doctor
+          <span><b>Doctor</b><small>Access clinical workspace</small></span
+          ><strong>&rarr;</strong></button
+        ><button type="button" data-role="Admin">
+          Admin
+          <span
+            ><b>Hospital admin</b><small>Manage your care network</small></span
+          ><strong>&rarr;</strong>
+        </button>
+      </div>
+      <form id="authForm" hidden>
+        <input id="authRole" type="hidden" /><label
+          >Mobile number<input
+            id="authContact"
+            required
+            placeholder="01XXXXXXXXX"
+            autocomplete="tel" /></label
+        ><label
+          >Password<input
+            id="authPassword"
+            required
+            type="password"
+            minlength="8"
+            autocomplete="current-password"
+        /></label>
+        <div id="registrationFields" hidden>
+          <label
+            >First name<input id="firstName" autocomplete="given-name" /></label
+          ><label
+            >Last name<input id="lastName" autocomplete="family-name" /></label
+          ><label
+            >Address<input id="address" autocomplete="street-address" /></label
+          ><label>District<input id="district" value="Dhaka" /></label
+          ><label>Area<input id="area" placeholder="e.g. Dhanmondi" /></label
+          ><label
+            >Gender<select id="gender">
+              <option value="">Prefer not to say</option>
+              <option>Female</option>
+              <option>Male</option>
+              <option>Other</option>
+            </select></label
+          >
+        </div>
+        <p id="authError" class="auth-error" role="alert"></p>
+        <button id="authSubmit" class="button" type="submit">
+          Sign in <b>&rarr;</b></button
+        ><button id="registerToggle" class="form-link" type="button">
+          Create a patient account</button
+        ><button id="backToRoles" class="form-link" type="button">
+          Choose another role
+        </button>
+      </form>
+      <p class="dialog-note">
+        Seed accounts: use their listed mobile number and
+        <b>CancerCare2026</b> for the first sign-in.
+      </p>
+    </dialog>
+    <dialog id="detailDialog">
+      <button class="close">×</button>
+      <div id="detailContent"></div>
+    </dialog>
+    <div id="toast"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

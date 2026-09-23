@@ -5,7 +5,7 @@ async function testHospitals() {
         const result = await pool.query(`
             SELECT *
             FROM hospitals
-            LIMIT 5;
+            ;
         `);
 
         console.log("Hospitals found:", result.rows.length);
