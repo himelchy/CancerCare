@@ -289,6 +289,40 @@ const initializeContentUpdates = async () => {
         WHERE status = 'pending'`);
 };
 
+const initializeDoctorApplications = async () => {
+    await pool.query(`ALTER TABLE doctors ADD COLUMN IF NOT EXISTS qualification VARCHAR(250)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS doctor_registration_applications (
+        application_id SERIAL PRIMARY KEY,
+        first_name VARCHAR(30) NOT NULL,
+        last_name VARCHAR(30),
+        contact VARCHAR(15) NOT NULL,
+        password_hash VARCHAR(100),
+        hospital_id INTEGER NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+        license_no VARCHAR(50) NOT NULL,
+        qualification VARCHAR(250) NOT NULL,
+        license_document BYTEA NOT NULL,
+        document_mime VARCHAR(40) NOT NULL CHECK (document_mime IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')),
+        email VARCHAR(100),
+        fees NUMERIC(10,2) NOT NULL CHECK (fees > 0),
+        gender VARCHAR(10),
+        address VARCHAR(255) NOT NULL,
+        district VARCHAR(100),
+        area VARCHAR(100) NOT NULL,
+        experience_years INTEGER NOT NULL CHECK (experience_years >= 0),
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+        rejection_reason TEXT,
+        submitted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        reviewed_by INTEGER REFERENCES admins(admin_id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMPTZ
+    )`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS pending_doctor_application_contact_idx
+        ON doctor_registration_applications (contact) WHERE status = 'pending'`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS pending_doctor_application_license_idx
+        ON doctor_registration_applications (license_no) WHERE status = 'pending'`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS pending_doctor_application_email_idx
+        ON doctor_registration_applications (email) WHERE status = 'pending' AND email IS NOT NULL`);
+};
+
 const initializeAppointments = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS appointments (
         appointment_id SERIAL PRIMARY KEY,
@@ -685,6 +719,48 @@ app.post("/api/doctor/appointments/:id/complete", requireRole("Doctor"), asyncRo
         RETURNING appointment_id`, [req.params.id, req.authUser.id]);
     if (!result.rowCount) return res.status(404).json({ error: "This assigned appointment was not found for your account." });
     res.json({ message: "Visit marked complete. The appointment was archived and removed from active appointment lists." });
+}));
+
+app.get("/api/admin/doctor-applications", requireRole("Admin"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT application.application_id, application.first_name,
+        application.last_name, application.contact, application.hospital_id, hospital.hospital_name,
+        application.license_no, application.qualification, application.document_mime,
+        encode(application.license_document, 'base64') AS document_base64, application.email,
+        application.fees, application.gender, application.address, application.district,
+        application.area, application.experience_years, application.submitted_at
+        FROM doctor_registration_applications application
+        JOIN hospitals hospital ON hospital.hospital_id = application.hospital_id
+        WHERE application.status = 'pending' AND application.hospital_id = (
+            SELECT hospital_id FROM admins WHERE admin_id = $1
+        ) ORDER BY application.submitted_at ASC LIMIT 100`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.post("/api/admin/doctor-applications/:id/approve", requireRole("Admin"), asyncRoute(async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "Choose a valid doctor application." });
+    try {
+        await transactionQuery("CALL approve_doctor_registration($1, $2)", [req.params.id, req.authUser.id]);
+        res.json({ message: "Doctor approved. Their account and hospital access are now active." });
+    } catch (error) {
+        if (error.code === "P0002") return res.status(404).json({ error: error.message });
+        if (error.code === "42501") return res.status(403).json({ error: "This application belongs to another hospital." });
+        if (error.code === "23505") return res.status(409).json({ error: "The phone, medical license, or email is already used by another account." });
+        throw error;
+    }
+}));
+
+app.post("/api/admin/doctor-applications/:id/reject", requireRole("Admin"), asyncRoute(async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "Choose a valid doctor application." });
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length > 1000) return res.status(400).json({ error: "Keep the review note under 1,000 characters." });
+    const result = await transactionQuery(`UPDATE doctor_registration_applications
+        SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP,
+            rejection_reason = $2, password_hash = NULL
+        WHERE application_id = $3 AND status = 'pending' AND hospital_id = (
+            SELECT hospital_id FROM admins WHERE admin_id = $1
+        ) RETURNING application_id`, [req.authUser.id, reason || null, req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "Pending doctor application not found for your hospital." });
+    res.json({ message: "Doctor application disapproved." });
 }));
 
 app.get("/api/admin/appointments", requireRole("Admin"), asyncRoute(async (_req, res) => {
@@ -1387,6 +1463,68 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
     }
 }));
 
+app.post("/api/doctor-applications", asyncRoute(async (req, res) => {
+    const firstName = typeof req.body.firstName === "string" ? req.body.firstName.trim() : "";
+    const lastName = typeof req.body.lastName === "string" ? req.body.lastName.trim() : "";
+    const contact = typeof req.body.contact === "string" ? req.body.contact.trim() : "";
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = req.body.password;
+    const licenseNo = typeof req.body.licenseNo === "string" ? req.body.licenseNo.trim() : "";
+    const qualification = typeof req.body.qualification === "string" ? req.body.qualification.trim() : "";
+    const address = typeof req.body.address === "string" ? req.body.address.trim() : "";
+    const district = typeof req.body.district === "string" ? req.body.district.trim() : "";
+    const area = typeof req.body.area === "string" ? req.body.area.trim() : "";
+    const gender = typeof req.body.gender === "string" ? req.body.gender.trim() : "";
+    const hospitalId = Number(req.body.hospitalId);
+    const fees = Number(req.body.fees);
+    const experienceYears = Number(req.body.experienceYears);
+
+    if (!firstName || firstName.length > 30 || lastName.length > 30 ||
+        !/^\+?[0-9]{7,15}$/.test(contact) || typeof password !== "string" || password.length < 8 || password.length > 128 ||
+        !Number.isInteger(hospitalId) || hospitalId < 1 || !licenseNo || licenseNo.length > 50 ||
+        !qualification || qualification.length > 250 || !address || address.length > 255 ||
+        district.length > 100 || !area || area.length > 100 || gender.length > 10 ||
+        !Number.isFinite(fees) || fees <= 0 || fees > 1000000 ||
+        !Number.isInteger(experienceYears) || experienceYears < 0 || experienceYears > 80 ||
+        (email && (email.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))) {
+        return res.status(400).json({ error: "Check the required fields, license, contact, qualification, and field lengths." });
+    }
+
+    const documentMatch = typeof req.body.licenseDocument === "string" &&
+        req.body.licenseDocument.match(/^data:(application\/pdf|image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/i);
+    if (!documentMatch) return res.status(400).json({ error: "Attach license proof as a PDF, JPG, PNG, or WebP file." });
+    const documentMime = documentMatch[1].toLowerCase();
+    const licenseDocument = Buffer.from(documentMatch[2], "base64");
+    if (!licenseDocument.length || licenseDocument.length > 2 * 1024 * 1024) {
+        return res.status(400).json({ error: "License proof must be smaller than 2 MB." });
+    }
+
+    const hospital = await pool.query("SELECT hospital_id FROM hospitals WHERE hospital_id = $1", [hospitalId]);
+    if (!hospital.rowCount) return res.status(400).json({ error: "Choose a hospital from the list." });
+    const existing = await pool.query(`SELECT 1 FROM users WHERE contact = $1
+        UNION ALL SELECT 1 FROM doctors WHERE license_no = $2
+        UNION ALL SELECT 1 FROM doctors WHERE $3::text IS NOT NULL AND lower(email) = $3 LIMIT 1`,
+    [contact, licenseNo, email || null]);
+    if (existing.rowCount) return res.status(409).json({ error: "That mobile number, license, or email is already registered." });
+
+    try {
+        const result = await transactionQuery(`INSERT INTO doctor_registration_applications (
+            first_name, last_name, contact, password_hash, hospital_id, license_no, qualification,
+            license_document, document_mime, email, fees, gender, address, district, area, experience_years
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        RETURNING application_id, status, submitted_at`,
+        [firstName, lastName || null, contact, hashPassword(password), hospitalId, licenseNo, qualification,
+            licenseDocument, documentMime, email || null, fees, gender || null, address, district || null, area, experienceYears]);
+        res.status(201).json({
+            message: "Doctor application submitted. An administrator at your selected hospital must review your credentials before you can sign in.",
+            application: result.rows[0]
+        });
+    } catch (error) {
+        if (error.code === "23505") return res.status(409).json({ error: "A pending application already uses that mobile number, license, or email." });
+        throw error;
+    }
+}));
+
 /* =========================
    FRONTEND
    ========================= */
@@ -1410,7 +1548,7 @@ app.get("*splat", (_req, res) =>
    START SERVER
    ========================= */
 
-initializeAuthSecret().then(initializeBlogSubmissions).then(initializeLearnArticles).then(initializeContentUpdates).then(initializeAppointments).then(initializePrescriptionAppointments).then(initializeDatabaseRoutines).then(() => {
+initializeAuthSecret().then(initializeBlogSubmissions).then(initializeLearnArticles).then(initializeContentUpdates).then(initializeDoctorApplications).then(initializeAppointments).then(initializePrescriptionAppointments).then(initializeDatabaseRoutines).then(() => {
     app.listen(PORT, () => {
         console.log(`CancerCare is running at http://localhost:${PORT}`);
         console.log(`Swagger API docs: http://localhost:${PORT}/api-docs`);

@@ -59,6 +59,40 @@ BEFORE UPDATE OF status ON content_update_submissions
 FOR EACH ROW
 EXECUTE FUNCTION record_submission_status_change();
 
+CREATE TABLE IF NOT EXISTS doctor_registration_status_audit (
+    audit_id BIGSERIAL PRIMARY KEY,
+    application_id INTEGER NOT NULL REFERENCES doctor_registration_applications(application_id) ON DELETE CASCADE,
+    old_status TEXT NOT NULL,
+    new_status TEXT NOT NULL,
+    reviewed_by INTEGER,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION record_doctor_registration_status_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+        IF OLD.status = 'pending' AND NEW.status IN ('approved', 'rejected') THEN
+            NEW.reviewed_at := COALESCE(NEW.reviewed_at, CURRENT_TIMESTAMP);
+        END IF;
+        INSERT INTO doctor_registration_status_audit (
+            application_id, old_status, new_status, reviewed_by
+        ) VALUES (
+            NEW.application_id, OLD.status, NEW.status, NEW.reviewed_by
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS doctor_registration_status_audit_trigger ON doctor_registration_applications;
+CREATE TRIGGER doctor_registration_status_audit_trigger
+BEFORE UPDATE OF status ON doctor_registration_applications
+FOR EACH ROW
+EXECUTE FUNCTION record_doctor_registration_status_change();
+
 -- Archive a completed visit before removing it from active appointment lists.
 CREATE OR REPLACE FUNCTION archive_completed_appointment()
 RETURNS TRIGGER
@@ -148,6 +182,63 @@ BEGIN
     SET status = 'approved', reviewed_by = p_admin_id,
         reviewed_at = CURRENT_TIMESTAMP, blog_id = new_blog_id
     WHERE submission_id = p_submission_id;
+END;
+$$;
+
+-- Create an approved Doctor account and its hospital/admin links atomically.
+CREATE OR REPLACE PROCEDURE approve_doctor_registration(
+    p_application_id INTEGER,
+    p_admin_id INTEGER
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    application_row doctor_registration_applications%ROWTYPE;
+    admin_hospital_id INTEGER;
+    new_doctor_id INTEGER;
+BEGIN
+    SELECT * INTO application_row
+    FROM doctor_registration_applications
+    WHERE application_id = p_application_id AND status = 'pending'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Pending doctor application not found.' USING ERRCODE = 'P0002';
+    END IF;
+
+    SELECT hospital_id INTO admin_hospital_id
+    FROM admins WHERE admin_id = p_admin_id;
+
+    IF NOT FOUND OR admin_hospital_id <> application_row.hospital_id THEN
+        RAISE EXCEPTION 'This doctor application belongs to another hospital.' USING ERRCODE = '42501';
+    END IF;
+
+    INSERT INTO users (first_name, last_name, contact, password_hash)
+    VALUES (application_row.first_name, application_row.last_name,
+            application_row.contact, application_row.password_hash)
+    RETURNING user_id INTO new_doctor_id;
+
+    INSERT INTO doctors (
+        doctor_id, license_no, fees, gender, email, qualification,
+        address, district, area, experience_years
+    ) VALUES (
+        new_doctor_id, application_row.license_no, application_row.fees,
+        application_row.gender, application_row.email, application_row.qualification,
+        application_row.address, application_row.district, application_row.area,
+        application_row.experience_years
+    );
+
+    INSERT INTO doctor_hospital (doctor_id, hospital_id, since_date)
+    VALUES (new_doctor_id, application_row.hospital_id, CURRENT_DATE);
+
+    INSERT INTO admin_doctor_assignment (admin_id, doctor_id, assignment_date)
+    VALUES (p_admin_id, new_doctor_id, CURRENT_DATE)
+    ON CONFLICT (admin_id, doctor_id) DO NOTHING;
+
+    UPDATE doctor_registration_applications
+    SET status = 'approved', reviewed_by = p_admin_id,
+        reviewed_at = CURRENT_TIMESTAMP, password_hash = NULL
+    WHERE application_id = p_application_id;
 END;
 $$;
 

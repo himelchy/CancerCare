@@ -250,12 +250,12 @@ async function openHospital(id) {
 }
 
 function openAuth(role) {
-  registering = false; $("#loginDialog").showModal(); $("#rolePicker").hidden = true; $("#authForm").hidden = false;
+  registering = false; $("#loginDialog").showModal(); $("#rolePicker").hidden = true; $("#authForm").hidden = false; $("#doctorApplicationForm").hidden = true;
   $("#authRole").value = role; $("#authTitle").textContent = `${role} sign in`; $("#authSubtitle").textContent = "Enter your registered mobile number and password.";
-  $("#registrationFields").hidden = true; $("#registerToggle").hidden = role !== "Patient"; $("#authSubmit").innerHTML = "Sign in <b>&rarr;</b>"; $("#authError").textContent = "";
+  $("#registrationFields").hidden = true; $("#registerToggle").hidden = role !== "Patient"; $("#applyDoctorToggle").hidden = role !== "Doctor"; $("#authSubmit").innerHTML = "Sign in <b>&rarr;</b>"; $("#authError").textContent = "";
 }
 
-function resetAuth() { $("#rolePicker").hidden = false; $("#authForm").hidden = true; $("#authError").textContent = ""; }
+function resetAuth() { $("#rolePicker").hidden = false; $("#authForm").hidden = true; $("#doctorApplicationForm").hidden = true; $("#applyDoctorToggle").hidden = true; $("#authError").textContent = ""; }
 
 function openPublicSection(section) {
   $("#home").hidden = false;
@@ -275,7 +275,7 @@ function dashboardFor(user) {
   const views = {
     Patient: { eyebrow: "PATIENT SPACE", title: `Welcome back, ${user.name}.`, intro: "Your care information and learning resources, together in one place.", cards: [["Find care", "Browse hospitals and specialists near you.", "#care"], ["Appointments", "Request a visit and follow its assignment status.", "#patient-appointments"], ["Prescriptions", "View medicines and directions from your doctor.", "#patient-prescriptions"], ["Learn", "Read cancer guides and doctor-authored articles.", "#learn"], ["Community stories", "Read patient stories or share your own.", "#patient-blogs"]] },
     Doctor: { eyebrow: "CLINICAL WORKSPACE", title: `Good to see you, Dr. ${user.name}.`, intro: "A workspace for your schedule, patient visits, and educational contributions.", cards: [["Today's schedule", "Review appointments and visits assigned by management.", "#doctor-schedule"], ["Care directory", "Find hospitals and connect patients with relevant services.", "#care"], ["Write a Learn article", "Share educational information for admin review.", "#doctor-learn-articles"]] },
-    Admin: { eyebrow: "ADMIN WORKSPACE", title: `Welcome, ${user.name}.`, intro: "Review CancerCare activity and manage information shared with patients.", cards: [["Network overview", "View hospitals, doctors, cancer guides, and stories.", "#admin-overview"], ["Appointments", "Make the final assignment after a doctor marks available.", "#admin-appointments"], ["Patient stories", "Approve patient community stories.", "#admin-blog-review"], ["Learn articles", "Review doctor-authored educational content.", "#admin-learn-review"]] }
+    Admin: { eyebrow: "ADMIN WORKSPACE", title: `Welcome, ${user.name}.`, intro: "Review CancerCare activity and manage information shared with patients.", cards: [["Network overview", "View hospitals, doctors, cancer guides, and stories.", "#admin-overview"], ["Doctor applications", "Review credentials for your hospital.", "#admin-doctor-applications"], ["Appointments", "Make the final assignment after a doctor marks available.", "#admin-appointments"], ["Patient stories", "Approve patient community stories.", "#admin-blog-review"], ["Learn articles", "Review doctor-authored educational content.", "#admin-learn-review"]] }
   };
   const view = views[user.role] || views.Patient;
   const roleOverview = user.role === "Patient" ? `<section class="workspace-panel"><p class="eyebrow">YOUR CARE</p><h2>Care at a glance</h2><div class="workspace-stats"><article><span>Appointments</span><b>Request and track</b><p>Doctors mark availability and an admin confirms the assignment.</p></article><article><span>Prescriptions</span><b>View your prescriptions</b><p>Prescriptions from your visits appear below.</p></article><article><span>Patient ID</span><b>#${escapeHtml(user.id)}</b><p>Your CancerCare account identifier.</p></article></div></section><section id="patient-appointments" class="blog-workspace"><p class="eyebrow">YOUR APPOINTMENTS</p><h2>Requests and assignments</h2><div id="patientAppointments" class="appointment-list"><p>Loading appointments...</p></div></section><section id="patient-prescriptions" class="blog-workspace"><p class="eyebrow">YOUR MEDICINES</p><h2>Prescriptions</h2><p>View medicines, dosage, and instructions prescribed by your doctor.</p><div id="patientPrescriptions" class="prescription-list"><p>Loading prescriptions...</p></div></section>` : user.role === "Doctor" ? `<section id="doctor-schedule" class="workspace-panel"><p class="eyebrow">PATIENT APPOINTMENT REQUESTS</p><h2>Review requests and manage prescriptions</h2><p>Mark a request available when you can see the patient. After an admin assigns the visit, create or update that patient’s prescription here.</p><div id="doctorAppointments" class="appointment-list"><p>Loading appointment requests...</p></div></section>` : `<section id="admin-overview" class="workspace-panel"><p class="eyebrow">CANCERCARE NETWORK</p><h2>Management overview</h2><div id="adminDashboardStats" class="workspace-stats"><article><span>Hospitals</span><b>Loading</b></article><article><span>Doctors</span><b>Loading</b></article><article><span>Cancer guides</span><b>Loading</b></article><article><span>Published stories</span><b>Loading</b></article></div><div class="workspace-note"><b>Content review</b><p>Appointments and Learn articles are limited to doctors affiliated with your hospital.</p></div></section>`;
@@ -290,9 +290,11 @@ function dashboardFor(user) {
     $("#myLearnSubmissions").insertAdjacentHTML("beforebegin", `<h3>Your published Learn articles</h3><div id="myLearnArticles" class="blog-list"><p>Loading your articles...</p></div>`);
   }
   if (user.role === "Admin") {
+    $("#admin-overview").insertAdjacentHTML("afterend", `<section id="admin-doctor-applications" class="blog-workspace"><p class="eyebrow">DOCTOR CREDENTIAL REVIEW</p><h2>Doctor applications</h2><p>Review license proof and qualifications for doctors applying to your hospital.</p><div id="doctorApplicationList" class="learn-review-list"><p>Loading applications...</p></div></section>`);
     $("#admin-learn-review").insertAdjacentHTML("afterend", `<section id="admin-appointments" class="blog-workspace"><p class="eyebrow">APPOINTMENT ASSIGNMENT</p><h2>Doctor availability and patient requests</h2><p>Assign a date only after a doctor marks a request available.</p><div id="adminAppointments" class="appointment-list"><p>Loading appointment requests...</p></div></section>`);
     $("#admin-learn-review").insertAdjacentHTML("afterend", `<section id="admin-update-review" class="blog-workspace"><p class="eyebrow">AUTHOR UPDATE REQUESTS</p><h2>Published content updates</h2><p>Authors’ changes stay unpublished until you approve them.</p><div id="pendingContentUpdates" class="learn-review-list"><p>Loading update requests...</p></div></section><section id="admin-content-management" class="blog-workspace"><p class="eyebrow">PUBLISHED CONTENT</p><h2>Manage published stories and Learn articles</h2><h3>Patient stories</h3><div id="adminPublishedStories" class="admin-content-list"><p>Loading stories...</p></div><h3>Learn articles</h3><div id="adminPublishedLearnArticles" class="admin-content-list"><p>Loading articles...</p></div></section>`);
     loadAdminAppointments();
+    loadDoctorApplications();
   }
   if (user.role === "Patient") {
     loadPatientAppointments(); loadPatientPrescriptions();
@@ -358,6 +360,23 @@ document.addEventListener("click", (event) => {
     request(`/doctor/appointments/${completeAppointmentButton.dataset.appointmentId}/complete`, { method: "POST" })
       .then((result) => { showToast(result.message); loadDoctorAppointments(); })
       .catch((error) => { showToast(error.message); completeAppointmentButton.disabled = false; });
+    return;
+  }
+  const doctorApplicationButton = event.target.closest(".doctor-application-review");
+  if (doctorApplicationButton) {
+    const action = doctorApplicationButton.dataset.action;
+    let reason = "";
+    if (action === "approve" && !window.confirm("Approve this doctor and activate their account at your hospital?")) return;
+    if (action === "reject") {
+      const enteredReason = window.prompt("Why is this medical application being disapproved? (Optional)");
+      if (enteredReason === null) return;
+      reason = enteredReason.trim();
+    }
+    doctorApplicationButton.disabled = true;
+    request(`/admin/doctor-applications/${doctorApplicationButton.dataset.applicationId}/${action}`, {
+      method: "POST", body: JSON.stringify(action === "reject" ? { reason } : {})
+    }).then((result) => { showToast(result.message); loadDoctorApplications(); })
+      .catch((error) => { showToast(error.message); doctorApplicationButton.disabled = false; });
     return;
   }
   const assignButton = event.target.closest(".admin-assign-appointment");
@@ -530,6 +549,22 @@ async function loadAdminDashboardStats() {
   }
 }
 
+async function loadDoctorApplications() {
+  const target = $("#doctorApplicationList");
+  if (!target) return;
+  try {
+    const applications = await request("/admin/doctor-applications");
+    target.innerHTML = applications.length ? applications.map((item) => {
+      const name = `${item.first_name} ${item.last_name || ""}`.trim();
+      const proof = `data:${item.document_mime};base64,${item.document_base64}`;
+      const proofView = item.document_mime.startsWith("image/")
+        ? `<img class="doctor-license-proof" src="${proof}" alt="Medical license proof for ${escapeHtml(name)}" />`
+        : `<a class="button secondary" href="${proof}" target="_blank" rel="noopener noreferrer">Open license proof (PDF)</a>`;
+      return `<article class="learn-review-card"><p class="eyebrow">${escapeHtml(item.hospital_name)} · Applied ${escapeHtml(new Date(item.submitted_at).toLocaleDateString())}</p><h3>${escapeHtml(name)}</h3><p><b>Medical license:</b> ${escapeHtml(item.license_no)}</p><p><b>Qualification:</b> ${escapeHtml(item.qualification)} · <b>Experience:</b> ${escapeHtml(item.experience_years)} years</p><p><b>Contact:</b> ${escapeHtml(item.contact)}${item.email ? ` · ${escapeHtml(item.email)}` : ""}</p><p><b>Address:</b> ${escapeHtml(item.address)}, ${escapeHtml(item.area)}, ${escapeHtml(item.district || "")}</p><p><b>Consultation fee:</b> ${escapeHtml(item.fees)}</p>${proofView}<div class="blog-review-actions"><button class="button doctor-application-review" data-action="approve" data-application-id="${item.application_id}">Approve doctor</button><button class="button secondary doctor-application-review" data-action="reject" data-application-id="${item.application_id}">Disapprove</button></div></article>`;
+    }).join("") : "<p>No doctor applications are waiting for review at your hospital.</p>";
+  } catch (error) { target.innerHTML = `<p>${escapeHtml(error.message)}</p>`; }
+}
+
 async function reviewSubmission(button) {
   button.disabled = true;
   try {
@@ -541,6 +576,60 @@ async function reviewSubmission(button) {
 document.querySelectorAll(".close").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("[data-role]").forEach((button) => button.addEventListener("click", () => openAuth(button.dataset.role)));
 $("#backToRoles").addEventListener("click", resetAuth);
+$("#applyDoctorToggle").addEventListener("click", async () => {
+  $("#authForm").hidden = true;
+  $("#applyDoctorToggle").hidden = true;
+  $("#doctorApplicationForm").hidden = false;
+  $("#authTitle").textContent = "Apply for a doctor account";
+  $("#authSubtitle").textContent = "Your selected hospital’s admin will review your medical license and application.";
+  const selector = $("#doctorApplicationHospital");
+  const message = $("#doctorApplicationMessage");
+  message.textContent = "Loading hospitals…";
+  try {
+    const hospitals = await request("/hospitals");
+    selector.innerHTML = `<option value="">Choose your hospital</option>${hospitals.map((hospital) => `<option value="${hospital.hospital_id}">${escapeHtml(hospital.hospital_name)} · ${escapeHtml(hospital.area)}</option>`).join("")}`;
+    message.textContent = "An admin at your selected hospital must approve your medical credentials before you can sign in.";
+  } catch (error) { message.textContent = error.message; }
+});
+$("#doctorApplicationBack").addEventListener("click", () => {
+  $("#doctorApplicationForm").hidden = true;
+  $("#authForm").hidden = false;
+  $("#applyDoctorToggle").hidden = false;
+  $("#authTitle").textContent = "Doctor sign in";
+  $("#authSubtitle").textContent = "Enter your registered mobile number and password.";
+});
+$("#doctorApplicationForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = $("#doctorApplicationSubmit");
+  const message = $("#doctorApplicationMessage");
+  message.textContent = "";
+  submit.disabled = true;
+  submit.textContent = "Submitting application…";
+  try {
+    const fields = form.elements;
+    const file = fields.licenseDocument.files[0];
+    if (!file) throw new Error("Attach your medical license proof.");
+    if (file.size > 2 * 1024 * 1024) throw new Error("License proof must be smaller than 2 MB.");
+    const licenseDocument = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("The license proof could not be read."));
+      reader.readAsDataURL(file);
+    });
+    const payload = {
+      firstName: fields.firstName.value, lastName: fields.lastName.value, contact: fields.contact.value,
+      password: fields.password.value, hospitalId: fields.hospitalId.value, licenseNo: fields.licenseNo.value,
+      qualification: fields.qualification.value, licenseDocument, email: fields.email.value,
+      fees: fields.fees.value, experienceYears: fields.experienceYears.value, gender: fields.gender.value,
+      address: fields.address.value, district: fields.district.value, area: fields.area.value
+    };
+    const result = await request("/doctor-applications", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    message.textContent = result.message;
+  } catch (error) { message.textContent = error.message; }
+  finally { submit.disabled = false; submit.innerHTML = "Send doctor application <b>&rarr;</b>"; }
+});
 $("#registerToggle").addEventListener("click", () => { registering = !registering; $("#registrationFields").hidden = !registering; $("#authTitle").textContent = registering ? "Create a patient account" : "Patient sign in"; $("#authSubtitle").textContent = registering ? "Your details create a secure patient profile." : "Enter your registered mobile number and password."; $("#authSubmit").innerHTML = registering ? "Create account <b>&rarr;</b>" : "Sign in <b>&rarr;</b>"; $("#registerToggle").textContent = registering ? "I already have an account" : "Create a patient account"; });
 $("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const error = $("#authError"), submit = $("#authSubmit"); error.textContent = ""; submit.disabled = true; submit.textContent = registering ? "Creating account..." : "Signing in..."; try { const payload = registering ? { firstName: $("#firstName").value, lastName: $("#lastName").value, contact: $("#authContact").value, password: $("#authPassword").value, address: $("#address").value, district: $("#district").value, area: $("#area").value, gender: $("#gender").value } : { contact: $("#authContact").value, password: $("#authPassword").value, role: $("#authRole").value }; const data = await request(registering ? "/auth/register" : "/auth/login", { method: "POST", body: JSON.stringify(payload) }); currentUser = { ...data.user, token: data.token }; localStorage.setItem("cancerCareUser", JSON.stringify(currentUser)); $("#loginDialog").close(); dashboardFor(currentUser); showToast(`Welcome, ${data.user.name}. You are signed in as ${data.user.role}.`); } catch (err) { error.textContent = err.message; } finally { submit.disabled = false; submit.innerHTML = registering ? "Create account <b>&rarr;</b>" : "Sign in <b>&rarr;</b>"; } });
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => { activeDirectory = button.dataset.search; document.querySelectorAll(".tabs button").forEach((tab) => tab.classList.toggle("active", tab === button)); $("#directorySearch").placeholder = activeDirectory === "hospital" ? "Search by hospital name or area" : "Search doctor name or area"; loadDirectory($("#directorySearch").value); }));

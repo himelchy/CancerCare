@@ -969,14 +969,40 @@ dialog > p:not(.eyebrow) {
   }
 }
 .roles[hidden],
-#authForm[hidden],
-#registrationFields[hidden],
+  #authForm[hidden],
+  #doctorApplicationForm[hidden],
+  #registrationFields[hidden],
 .form-link[hidden] {
   display: none;
 }
-#authForm {
-  margin-top: 20px;
-}
+  #authForm {
+    margin-top: 20px;
+  }
+  #doctorApplicationForm {
+    margin-top: 20px;
+    max-height: 72vh;
+    overflow-y: auto;
+    padding-right: 5px;
+  }
+  #doctorApplicationForm label {
+    display: block;
+    color: #557578;
+    font-size: 12px;
+    font-weight: 700;
+    margin: 12px 0 0;
+  }
+  #doctorApplicationForm input,
+  #doctorApplicationForm select {
+    width: 100%;
+    display: block;
+    border: 1px solid #d8e5e0;
+    border-radius: 5px;
+    background: #fff;
+    color: var(--ink);
+    font: 14px var(--sans);
+    margin-top: 6px;
+    outline: none;
+  }
 #authForm label {
   display: block;
   color: #557578;
@@ -1372,6 +1398,7 @@ dialog > p:not(.eyebrow) {
 .submission-status.assigned { color: #24764a; background: #e4f5eb; }
   .doctor-appointment-card { align-items: flex-start; }
   .doctor-visit-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; }
+  .doctor-license-proof { display: block; max-width: min(100%, 420px); max-height: 320px; object-fit: contain; border: 1px solid #dce8e2; border-radius: 6px; margin: 12px 0; }
 .prescription-editor {
   flex: 1 0 100%;
   display: grid;

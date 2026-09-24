@@ -329,6 +329,27 @@
           Choose another role
         </button>
       </form>
+      <button id="applyDoctorToggle" class="form-link" type="button" hidden>Apply for a doctor account</button>
+      <form id="doctorApplicationForm" hidden>
+        <label>First name<input name="firstName" maxlength="30" required autocomplete="given-name" /></label>
+        <label>Last name<input name="lastName" maxlength="30" autocomplete="family-name" /></label>
+        <label>Mobile number<input name="contact" required placeholder="01XXXXXXXXX" autocomplete="tel" /></label>
+        <label>Password<input name="password" type="password" minlength="8" maxlength="128" required autocomplete="new-password" /></label>
+        <label>Hospital<select name="hospitalId" id="doctorApplicationHospital" required><option value="">Loading hospitals…</option></select></label>
+        <label>Medical license number<input name="licenseNo" maxlength="50" required /></label>
+        <label>Medical qualifications<input name="qualification" maxlength="250" placeholder="e.g. MBBS, FCPS (Oncology)" required /></label>
+        <label>License proof (PDF, JPG, PNG, WebP; max 2 MB)<input name="licenseDocument" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required /></label>
+        <label>Email (optional)<input name="email" type="email" maxlength="100" autocomplete="email" /></label>
+        <label>Consultation fee<input name="fees" type="number" min="1" max="1000000" step="0.01" required /></label>
+        <label>Years of experience<input name="experienceYears" type="number" min="0" max="80" step="1" required /></label>
+        <label>Gender (optional)<select name="gender"><option value="">Prefer not to say</option><option>Female</option><option>Male</option><option>Other</option></select></label>
+        <label>Address<input name="address" maxlength="255" required autocomplete="street-address" /></label>
+        <label>District<input name="district" maxlength="100" value="Dhaka" /></label>
+        <label>Area<input name="area" maxlength="100" required placeholder="e.g. Dhanmondi" /></label>
+        <p id="doctorApplicationMessage" class="auth-error" role="status"></p>
+        <button id="doctorApplicationSubmit" class="button" type="submit">Send doctor application <b>&rarr;</b></button>
+        <button id="doctorApplicationBack" class="form-link" type="button">Back to doctor sign in</button>
+      </form>
       <p class="dialog-note">
         Seed accounts: use their listed mobile number and
         <b>CancerCare2026</b> for the first sign-in.
