@@ -9,10 +9,82 @@ const pool = require("./db");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32);
+let AUTH_SECRET = process.env.AUTH_SECRET || null;
 
-app.use(cors());
+const allowedOrigins = new Set((process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean));
+app.use(cors({
+    origin(origin, callback) {
+        const localDevelopmentOrigin = origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+        callback(null, !origin || allowedOrigins.has(origin) || localDevelopmentOrigin);
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+app.use((_req, res, next) => {
+    res.set({
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    });
+    next();
+});
+app.use("/api", (_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+});
 app.use(express.json({ limit: "4mb" }));
+app.use((req, res, next) => {
+    if (req.body === undefined) req.body = {};
+    if (req.body !== undefined && (req.body === null || typeof req.body !== "object" || Array.isArray(req.body))) {
+        return res.status(400).json({ error: "Send the request body as a JSON object." });
+    }
+    return next();
+});
+
+const initializeAuthSecret = async () => {
+    if (AUTH_SECRET) {
+        if (Buffer.byteLength(AUTH_SECRET) < 32) throw new Error("AUTH_SECRET must contain at least 32 bytes.");
+        return;
+    }
+    const secretPath = path.join(__dirname, ".auth-secret");
+    try {
+        AUTH_SECRET = (await fs.readFile(secretPath, "utf8")).trim();
+    } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        const generatedSecret = crypto.randomBytes(32).toString("hex");
+        try {
+            await fs.writeFile(secretPath, generatedSecret, { encoding: "utf8", flag: "wx", mode: 0o600 });
+            AUTH_SECRET = generatedSecret;
+        } catch (writeError) {
+            if (writeError.code !== "EEXIST") throw writeError;
+            AUTH_SECRET = (await fs.readFile(secretPath, "utf8")).trim();
+        }
+    }
+    if (Buffer.byteLength(AUTH_SECRET) < 32) throw new Error("The local auth secret is invalid; remove backend/.auth-secret and restart.");
+};
+
+const withTransaction = async (operation) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const result = await operation(client);
+        await client.query("COMMIT");
+        return result;
+    } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+const transactionQuery = (query, values = []) => withTransaction((client) => client.query(query, values));
+
+const isIsoDate = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) &&
+    new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
 
 /* =========================
    SWAGGER CONFIGURATION
@@ -51,6 +123,7 @@ const passwordMatches = (password, storedHash) => {
     if (!storedHash || !storedHash.startsWith("scrypt$")) return false;
 
     const [, salt, expected] = storedHash.split("$");
+    if (!/^[a-f0-9]{32}$/i.test(salt || "") || !/^[a-f0-9]{48}$/i.test(expected || "")) return false;
     const actual = hashPassword(password, salt).split("$")[2];
 
     return crypto.timingSafeEqual(
@@ -70,46 +143,86 @@ const asyncRoute = (handler) => async (req, res) => {
     }
 };
 
-const createAuthToken = (userId) => {
+const createAuthToken = (userId, role) => {
     const expiresAt = Date.now() + 12 * 60 * 60 * 1000;
-    const value = `${userId}.${expiresAt}`;
+    const value = `${userId}.${expiresAt}.${role}`;
     const signature = crypto.createHmac("sha256", AUTH_SECRET).update(value).digest("hex");
     return `${value}.${signature}`;
 };
 
-const requireRole = (role) => async (req, res, next) => {
+const loginFailures = new Map();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 10;
+const loginRateLimit = (req, res, next) => {
+    if (loginFailures.size > 10000) {
+        for (const [ip, attempt] of loginFailures) {
+            if (Date.now() - attempt.startedAt >= LOGIN_WINDOW_MS) loginFailures.delete(ip);
+        }
+    }
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const attempt = loginFailures.get(key);
+    if (attempt && Date.now() - attempt.startedAt < LOGIN_WINDOW_MS && attempt.count >= LOGIN_MAX_FAILURES) {
+        return res.status(429).json({ error: "Too many sign-in attempts. Wait 15 minutes and try again." });
+    }
+    if (attempt && Date.now() - attempt.startedAt >= LOGIN_WINDOW_MS) loginFailures.delete(key);
+    return next();
+};
+const recordLoginFailure = (req) => {
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const current = loginFailures.get(key);
+    if (!current || Date.now() - current.startedAt >= LOGIN_WINDOW_MS) {
+        loginFailures.set(key, { startedAt: Date.now(), count: 1 });
+    } else {
+        current.count += 1;
+    }
+};
+const clearLoginFailures = (req) => loginFailures.delete(req.ip || req.socket.remoteAddress || "unknown");
+
+const authenticate = async (req, res, next) => {
     try {
-        const [userId, expiresAt, signature] = (req.headers.authorization || "")
+        const [userId, expiresAt, tokenRole, signature] = (req.headers.authorization || "")
             .replace(/^Bearer\s+/i, "")
             .split(".");
-        const value = `${userId}.${expiresAt}`;
+        const value = `${userId}.${expiresAt}.${tokenRole}`;
         const expected = crypto.createHmac("sha256", AUTH_SECRET).update(value).digest("hex");
-        const validSignature = signature && signature.length === expected.length &&
+        const validSignature = /^[a-f0-9]{64}$/i.test(signature || "") && signature.length === expected.length &&
             crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 
-        if (!/^\d+$/.test(userId || "") || Number(expiresAt) <= Date.now() || !validSignature) {
+        if (!/^\d+$/.test(userId || "") || !Number.isSafeInteger(Number(expiresAt)) ||
+            Number(expiresAt) <= Date.now() || !["Patient", "Doctor", "Admin"].includes(tokenRole) || !validSignature) {
             return res.status(401).json({ error: "Please sign in again to continue." });
         }
 
-        const result = await pool.query(`SELECT u.user_id, p.patient_id, d.doctor_id, a.admin_id
+        const result = await pool.query(`SELECT u.user_id, u.first_name, u.last_name,
+            CASE WHEN p.patient_id IS NOT NULL THEN 'Patient'
+                 WHEN d.doctor_id IS NOT NULL THEN 'Doctor'
+                 WHEN a.admin_id IS NOT NULL THEN 'Admin' END AS role
             FROM users u
             LEFT JOIN patient p ON p.patient_id = u.user_id
             LEFT JOIN doctors d ON d.doctor_id = u.user_id
             LEFT JOIN admins a ON a.admin_id = u.user_id
             WHERE u.user_id = $1`, [userId]);
         const account = result.rows[0];
-        if (!account || (role === "Patient" && !account.patient_id) ||
-            (role === "Doctor" && !account.doctor_id) || (role === "Admin" && !account.admin_id)) {
+        if (!account || account.role !== tokenRole) {
             return res.status(403).json({ error: "You do not have permission to do that." });
         }
 
-        req.authUser = { id: Number(userId), role };
-        next();
+        req.authUser = {
+            id: Number(userId),
+            role: account.role,
+            name: `${account.first_name} ${account.last_name || ""}`.trim()
+        };
+        return next();
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "We could not verify your account right now." });
     }
 };
+
+const requireRole = (role) => (req, res, next) => authenticate(req, res, () => {
+    if (req.authUser.role !== role) return res.status(403).json({ error: "You do not have permission to do that." });
+    return next();
+});
 
 const initializeBlogSubmissions = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS blog_submissions (
@@ -174,6 +287,64 @@ const initializeContentUpdates = async () => {
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS one_pending_content_edit_idx
         ON content_update_submissions (content_type, content_id, author_id)
         WHERE status = 'pending'`);
+};
+
+const initializeAppointments = async () => {
+    await pool.query(`CREATE TABLE IF NOT EXISTS appointments (
+        appointment_id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        requested_date DATE,
+        appointment_date DATE,
+        status VARCHAR(24) NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'doctor_available', 'assigned', 'completed')),
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        marked_available_at TIMESTAMPTZ,
+        assigned_by INTEGER REFERENCES admins(admin_id),
+        assigned_at TIMESTAMPTZ
+    )`);
+    // Upgrade databases created before visit completion was added.
+    await pool.query(`ALTER TABLE appointments DROP CONSTRAINT IF EXISTS appointments_status_check`);
+    await pool.query(`ALTER TABLE appointments ADD CONSTRAINT appointments_status_check
+        CHECK (status IN ('pending', 'doctor_available', 'assigned', 'completed'))`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS completed_appointment_history (
+        appointment_id INTEGER PRIMARY KEY,
+        patient_id INTEGER NOT NULL,
+        doctor_id INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        requested_date DATE,
+        appointment_date DATE,
+        requested_at TIMESTAMPTZ NOT NULL,
+        marked_available_at TIMESTAMPTZ,
+        assigned_by INTEGER,
+        assigned_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        archived_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS appointments_patient_status_idx
+        ON appointments (patient_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS appointments_doctor_status_idx
+        ON appointments (doctor_id, status)`);
+};
+
+const initializePrescriptionAppointments = async () => {
+    // Keep prescription history compatible with the existing prescriptions and
+    // prescription_medicine tables while tying new prescriptions to visits.
+    await pool.query(`CREATE TABLE IF NOT EXISTS prescriptions (
+        prescription_id SERIAL PRIMARY KEY,
+        doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE RESTRICT,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        appointment_id INTEGER REFERENCES appointments(appointment_id) ON DELETE SET NULL,
+        prescription_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        visit_date DATE,
+        description TEXT
+    )`);
+    await pool.query(`ALTER TABLE prescriptions
+        ADD COLUMN IF NOT EXISTS appointment_id INTEGER REFERENCES appointments(appointment_id) ON DELETE SET NULL`);
+    await pool.query(`ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS visit_date DATE`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS prescriptions_appointment_unique_idx
+        ON prescriptions (appointment_id)`);
 };
 
 const initializeDatabaseRoutines = async () => {
@@ -335,8 +506,9 @@ app.get("/api/doctors", asyncRoute(async (req, res) => {
             ON dcs.doctor_id = d.doctor_id
         LEFT JOIN cancers c
             ON c.cancer_id = dcs.cancer_id
-        WHERE CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) ILIKE $1
-           OR d.area ILIKE $1
+        WHERE (CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) ILIKE $1
+           OR d.area ILIKE $1)
+          AND EXISTS (SELECT 1 FROM doctor_hospital dh WHERE dh.doctor_id = d.doctor_id)
         GROUP BY d.doctor_id, u.first_name, u.last_name
         ORDER BY CASE d.doctor_id
             WHEN 1 THEN 1
@@ -352,6 +524,200 @@ app.get("/api/doctors", asyncRoute(async (req, res) => {
         LIMIT 12`, [search]);
 
     res.json(result.rows);
+}));
+
+/* =========================
+   APPOINTMENTS
+   ========================= */
+
+app.post("/api/appointments", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const doctorId = Number(req.body.doctor_id);
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
+    const requestedDate = req.body.requested_date || null;
+    if (!Number.isInteger(doctorId) || doctorId < 1 || !reason || reason.length > 2000) {
+        return res.status(400).json({ error: "Choose a doctor and briefly describe the appointment request." });
+    }
+    if (requestedDate && !isIsoDate(requestedDate)) {
+        return res.status(400).json({ error: "Choose a valid preferred date." });
+    }
+    const result = await transactionQuery(`INSERT INTO appointments (patient_id, doctor_id, reason, requested_date)
+        SELECT $1, d.doctor_id, $3, $4 FROM doctors d
+        WHERE d.doctor_id = $2 AND EXISTS (SELECT 1 FROM doctor_hospital dh WHERE dh.doctor_id = d.doctor_id)
+        RETURNING appointment_id, status, requested_at`, [req.authUser.id, doctorId, reason, requestedDate]);
+    if (!result.rowCount) return res.status(404).json({ error: "This doctor is not currently connected to a hospital." });
+    res.status(201).json({ message: "Appointment request sent to the doctor.", appointment: result.rows[0] });
+}));
+
+app.get("/api/appointments/mine", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT ap.appointment_id, ap.reason, ap.requested_date,
+        ap.appointment_date, ap.status, ap.requested_at, ap.marked_available_at, ap.assigned_at,
+        CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name, d.area
+        FROM appointments ap JOIN doctors d ON d.doctor_id = ap.doctor_id
+        JOIN users u ON u.user_id = d.doctor_id
+        WHERE ap.patient_id = $1 ORDER BY ap.requested_at DESC`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.get("/api/prescriptions/mine", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT pr.prescription_id, pr.prescription_date, pr.description,
+        COALESCE(a.appointment_date, pr.visit_date) AS appointment_date, CONCAT(du.first_name, ' ', COALESCE(du.last_name, '')) AS doctor_name,
+        COALESCE(json_agg(json_build_object(
+            'medicine_name', m.medicine_name,
+            'dosage', pm.dosage,
+            'instructions', pm.description
+        ) ORDER BY m.medicine_name) FILTER (WHERE pm.medicine_id IS NOT NULL), '[]'::json) AS medicines
+        FROM prescriptions pr
+        JOIN users du ON du.user_id = pr.doctor_id
+        LEFT JOIN appointments a ON a.appointment_id = pr.appointment_id
+        LEFT JOIN prescription_medicine pm ON pm.prescription_id = pr.prescription_id
+        LEFT JOIN medicines m ON m.medicine_id = pm.medicine_id
+        WHERE pr.patient_id = $1
+        GROUP BY pr.prescription_id, a.appointment_date, pr.visit_date, du.first_name, du.last_name
+        ORDER BY pr.prescription_date DESC, pr.prescription_id DESC`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.get("/api/doctor/appointments", requireRole("Doctor"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT ap.appointment_id, ap.reason, ap.requested_date,
+        ap.appointment_date, ap.status, ap.requested_at, ap.assigned_at,
+        CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS patient_name,
+        u.contact, pt.patient_id, rx.prescription_id
+        FROM appointments ap JOIN patient pt ON pt.patient_id = ap.patient_id
+        JOIN users u ON u.user_id = pt.patient_id
+        LEFT JOIN prescriptions rx ON rx.appointment_id = ap.appointment_id
+        WHERE ap.doctor_id = $1 ORDER BY CASE ap.status WHEN 'pending' THEN 0 WHEN 'doctor_available' THEN 1 ELSE 2 END,
+        ap.requested_at DESC`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.get("/api/doctor/appointments/:id/prescription", requireRole("Doctor"), asyncRoute(async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "Choose a valid assigned appointment." });
+    const appointment = await pool.query(`SELECT appointment_id FROM appointments
+        WHERE appointment_id = $1 AND doctor_id = $2 AND status = 'assigned'`, [req.params.id, req.authUser.id]);
+    if (!appointment.rowCount) return res.status(404).json({ error: "This assigned appointment was not found for your account." });
+
+    const [prescriptionResult, medicinesResult] = await Promise.all([
+        pool.query(`SELECT prescription_id, prescription_date, description FROM prescriptions WHERE appointment_id = $1`, [req.params.id]),
+        pool.query(`SELECT medicine_id, medicine_name FROM medicines ORDER BY medicine_name`)
+    ]);
+    let prescription = prescriptionResult.rows[0] || null;
+    if (prescription) {
+        const items = await pool.query(`SELECT pm.medicine_id, m.medicine_name, pm.dosage, pm.description AS instructions
+            FROM prescription_medicine pm JOIN medicines m ON m.medicine_id = pm.medicine_id
+            WHERE pm.prescription_id = $1 ORDER BY m.medicine_name`, [prescription.prescription_id]);
+        prescription = { ...prescription, medicines: items.rows };
+    }
+    res.json({ prescription, medicines: medicinesResult.rows });
+}));
+
+app.put("/api/doctor/appointments/:id/prescription", requireRole("Doctor"), asyncRoute(async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "Choose a valid assigned appointment." });
+    const description = typeof req.body.description === "string" ? req.body.description.trim() : "";
+    const submittedItems = Array.isArray(req.body.medicines) ? req.body.medicines : [];
+    if (description.length > 10000 || submittedItems.length > 20) {
+        return res.status(400).json({ error: "Keep notes under 10,000 characters and list no more than 20 medicines." });
+    }
+    const medicines = submittedItems.map((item) => ({
+        medicineId: Number(item.medicine_id),
+        dosage: typeof item.dosage === "string" ? item.dosage.trim() : "",
+        instructions: typeof item.instructions === "string" ? item.instructions.trim() : ""
+    }));
+    if (medicines.some((item) => !Number.isInteger(item.medicineId) || item.medicineId < 1 ||
+        !item.dosage || item.dosage.length > 100 || item.instructions.length > 1000) ||
+        new Set(medicines.map((item) => item.medicineId)).size !== medicines.length) {
+        return res.status(400).json({ error: "Choose a medicine, enter its dosage, and avoid duplicate medicines." });
+    }
+    if (!medicines.length && !description) {
+        return res.status(400).json({ error: "Add at least one medicine or prescription note." });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const appointment = await client.query(`SELECT appointment_id, patient_id FROM appointments
+            WHERE appointment_id = $1 AND doctor_id = $2 AND status = 'assigned' FOR UPDATE`, [req.params.id, req.authUser.id]);
+        if (!appointment.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "This assigned appointment was not found for your account." });
+        }
+
+        const medicineIds = medicines.map((item) => item.medicineId);
+        if (medicineIds.length) {
+            const available = await client.query("SELECT medicine_id FROM medicines WHERE medicine_id = ANY($1::int[])", [medicineIds]);
+            if (available.rowCount !== medicineIds.length) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({ error: "One or more selected medicines are no longer available." });
+            }
+        }
+
+        const saved = await client.query(`INSERT INTO prescriptions (doctor_id, patient_id, appointment_id, prescription_date, description)
+            VALUES ($1, $2, $3, CURRENT_DATE, $4)
+            ON CONFLICT (appointment_id) DO UPDATE SET prescription_date = CURRENT_DATE, description = EXCLUDED.description
+            RETURNING prescription_id`, [req.authUser.id, appointment.rows[0].patient_id, req.params.id, description || null]);
+        const prescriptionId = saved.rows[0].prescription_id;
+        await client.query("DELETE FROM prescription_medicine WHERE prescription_id = $1", [prescriptionId]);
+        for (const item of medicines) {
+            await client.query(`INSERT INTO prescription_medicine (prescription_id, medicine_id, dosage, description)
+                VALUES ($1, $2, $3, $4)`, [prescriptionId, item.medicineId, item.dosage, item.instructions || null]);
+        }
+        await client.query("COMMIT");
+        res.json({ message: "Prescription saved and shared with the patient." });
+    } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
+}));
+
+app.post("/api/doctor/appointments/:id/available", requireRole("Doctor"), asyncRoute(async (req, res) => {
+    const result = await transactionQuery(`UPDATE appointments SET status = 'doctor_available', marked_available_at = CURRENT_TIMESTAMP
+        WHERE appointment_id = $1 AND doctor_id = $2 AND status = 'pending' RETURNING appointment_id`,
+    [req.params.id, req.authUser.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "This pending request was not found for your account." });
+    res.json({ message: "Marked available. An admin can now make the final appointment assignment." });
+}));
+
+app.post("/api/doctor/appointments/:id/complete", requireRole("Doctor"), asyncRoute(async (req, res) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: "Choose a valid assigned appointment." });
+    const result = await transactionQuery(`UPDATE appointments SET status = 'completed'
+        WHERE appointment_id = $1 AND doctor_id = $2 AND status = 'assigned'
+        RETURNING appointment_id`, [req.params.id, req.authUser.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "This assigned appointment was not found for your account." });
+    res.json({ message: "Visit marked complete. The appointment was archived and removed from active appointment lists." });
+}));
+
+app.get("/api/admin/appointments", requireRole("Admin"), asyncRoute(async (_req, res) => {
+    const result = await pool.query(`SELECT ap.appointment_id, ap.reason, ap.requested_date,
+        ap.appointment_date, ap.status, ap.requested_at, ap.marked_available_at,
+        CONCAT(pu.first_name, ' ', COALESCE(pu.last_name, '')) AS patient_name,
+        CONCAT(du.first_name, ' ', COALESCE(du.last_name, '')) AS doctor_name,
+        d.area, d.fees
+        FROM appointments ap JOIN patient p ON p.patient_id = ap.patient_id
+        JOIN users pu ON pu.user_id = p.patient_id JOIN doctors d ON d.doctor_id = ap.doctor_id
+        JOIN users du ON du.user_id = d.doctor_id
+        JOIN admins current_admin ON current_admin.admin_id = $1
+        JOIN doctor_hospital dh ON dh.doctor_id = d.doctor_id AND dh.hospital_id = current_admin.hospital_id
+        ORDER BY CASE ap.status WHEN 'doctor_available' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+        ap.requested_at DESC`, [_req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.post("/api/admin/appointments/:id/assign", requireRole("Admin"), asyncRoute(async (req, res) => {
+    const appointmentDate = req.body.appointment_date || null;
+    if (appointmentDate && !isIsoDate(appointmentDate)) {
+        return res.status(400).json({ error: "Choose a valid appointment date." });
+    }
+    const result = await transactionQuery(`UPDATE appointments SET status = 'assigned', appointment_date = $1,
+        assigned_by = $2, assigned_at = CURRENT_TIMESTAMP
+        WHERE appointment_id = $3 AND status = 'doctor_available'
+        AND EXISTS (SELECT 1 FROM admins current_admin
+            JOIN doctor_hospital dh ON dh.hospital_id = current_admin.hospital_id
+            WHERE current_admin.admin_id = $2 AND dh.doctor_id = appointments.doctor_id)
+        RETURNING appointment_id`,
+    [appointmentDate, req.authUser.id, req.params.id]);
+    if (!result.rowCount) return res.status(409).json({ error: "Only requests marked available by the doctor can be assigned." });
+    res.json({ message: "Appointment assigned to the doctor." });
 }));
 
 /* =========================
@@ -434,7 +800,7 @@ app.post("/api/blogs/:id/update-requests", requireRole("Patient"), asyncRoute(as
         return res.status(400).json({ error: "Add a title and story text (up to 10,000 characters)." });
     }
     try {
-        const result = await pool.query(`INSERT INTO content_update_submissions
+        const result = await transactionQuery(`INSERT INTO content_update_submissions
             (content_type, content_id, author_id, title, body)
             VALUES ('patient_story', $1, $2, $3, $4) RETURNING update_id, status`,
         [req.params.id, req.authUser.id, title, body]);
@@ -458,7 +824,7 @@ app.post("/api/blog-submissions", requireRole("Patient"), asyncRoute(async (req,
         return res.status(400).json({ error: "Add a title and a story (up to 10,000 characters)." });
     }
 
-    const result = await pool.query(`INSERT INTO blog_submissions (patient_id, title, body)
+    const result = await transactionQuery(`INSERT INTO blog_submissions (patient_id, title, body)
         VALUES ($1, $2, $3) RETURNING submission_id, title, status, submitted_at`,
     [req.authUser.id, title, body]);
     res.status(201).json({ message: "Your story was sent to an admin for review.", submission: result.rows[0] });
@@ -474,7 +840,7 @@ app.get("/api/admin/blog-submissions", requireRole("Admin"), asyncRoute(async (_
 
 app.post("/api/admin/blog-submissions/:id/approve", requireRole("Admin"), asyncRoute(async (req, res) => {
     try {
-        await pool.query("CALL approve_blog_submission($1, $2)", [req.params.id, req.authUser.id]);
+        await transactionQuery("CALL approve_blog_submission($1, $2)", [req.params.id, req.authUser.id]);
         res.json({ message: "Story approved and published." });
     } catch (error) {
         if (error.code === "P0002") return res.status(404).json({ error: error.message });
@@ -483,7 +849,7 @@ app.post("/api/admin/blog-submissions/:id/approve", requireRole("Admin"), asyncR
 }));
 
 app.post("/api/admin/blog-submissions/:id/reject", requireRole("Admin"), asyncRoute(async (req, res) => {
-    const result = await pool.query(`UPDATE blog_submissions
+    const result = await transactionQuery(`UPDATE blog_submissions
         SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
         WHERE submission_id = $2 AND status = 'pending' RETURNING submission_id`,
     [req.authUser.id, req.params.id]);
@@ -516,7 +882,9 @@ app.get("/api/learn-articles/mine", requireRole("Doctor"), asyncRoute(async (req
 }));
 
 app.post("/api/learn-articles/:id/update-requests", requireRole("Doctor"), asyncRoute(async (req, res) => {
-    const owned = await pool.query("SELECT 1 FROM learn_articles WHERE doctor_id = $1 AND article_id = $2",
+    const owned = await pool.query(`SELECT 1 FROM learn_articles a
+        WHERE a.doctor_id = $1 AND a.article_id = $2
+        AND EXISTS (SELECT 1 FROM doctor_hospital dh WHERE dh.doctor_id = a.doctor_id)`,
         [req.authUser.id, req.params.id]);
     if (!owned.rows.length) return res.status(404).json({ error: "You can only request changes to your own Learn articles." });
 
@@ -541,7 +909,7 @@ app.post("/api/learn-articles/:id/update-requests", requireRole("Doctor"), async
     }
 
     try {
-        const result = await pool.query(`INSERT INTO content_update_submissions
+        const result = await transactionQuery(`INSERT INTO content_update_submissions
             (content_type, content_id, author_id, title, category, body, sources, photo_bytes, photo_mime)
             VALUES ('learn_article', $1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING update_id, status`,
@@ -583,26 +951,41 @@ app.post("/api/learn-submissions", requireRole("Doctor"), asyncRoute(async (req,
         }
     }
 
-    const result = await pool.query(`INSERT INTO learn_submissions
+    const result = await transactionQuery(`INSERT INTO learn_submissions
         (doctor_id, title, category, body, sources, photo_bytes, photo_mime)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        SELECT $1, $2, $3, $4, $5, $6, $7
+        WHERE EXISTS (SELECT 1 FROM doctor_hospital WHERE doctor_id = $1)
         RETURNING submission_id, title, category, status, submitted_at`,
     [req.authUser.id, cleanTitle, cleanCategory || "General education", cleanBody, cleanSources || null, photoBytes, photoMime]);
+    if (!result.rowCount) return res.status(409).json({ error: "Your doctor account is not linked to a hospital yet, so no hospital admin can review this article." });
     res.status(201).json({ message: "Your Learn article was sent to an admin for review.", submission: result.rows[0] });
 }));
 
-app.get("/api/admin/learn-submissions", requireRole("Admin"), asyncRoute(async (_req, res) => {
+app.get("/api/admin/learn-submissions", requireRole("Admin"), asyncRoute(async (req, res) => {
     const result = await pool.query(`SELECT s.submission_id, s.title, s.category, s.body, s.sources,
         s.photo_mime, encode(s.photo_bytes, 'base64') AS photo_base64, s.submitted_at,
         CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name
         FROM learn_submissions s JOIN users u ON u.user_id = s.doctor_id
-        WHERE s.status = 'pending' ORDER BY s.submitted_at ASC`);
+        WHERE s.status = 'pending' AND EXISTS (
+            SELECT 1 FROM admins current_admin JOIN doctor_hospital dh ON dh.hospital_id = current_admin.hospital_id
+            WHERE current_admin.admin_id = $1 AND dh.doctor_id = s.doctor_id
+        ) ORDER BY s.submitted_at ASC`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.get("/api/admin/learn-articles", requireRole("Admin"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT a.article_id, a.title, a.category, a.published_at
+        FROM learn_articles a
+        WHERE EXISTS (SELECT 1 FROM admins current_admin
+            JOIN doctor_hospital dh ON dh.hospital_id = current_admin.hospital_id
+            WHERE current_admin.admin_id = $1 AND dh.doctor_id = a.doctor_id)
+        ORDER BY a.published_at DESC, a.article_id DESC`, [req.authUser.id]);
     res.json(result.rows);
 }));
 
 app.post("/api/admin/learn-submissions/:id/approve", requireRole("Admin"), asyncRoute(async (req, res) => {
     try {
-        await pool.query("CALL approve_learn_submission($1, $2)", [req.params.id, req.authUser.id]);
+        await transactionQuery("CALL approve_learn_submission($1, $2)", [req.params.id, req.authUser.id]);
         res.json({ message: "Learn article approved and published." });
     } catch (error) {
         if (error.code === "P0002") return res.status(404).json({ error: error.message });
@@ -611,9 +994,12 @@ app.post("/api/admin/learn-submissions/:id/approve", requireRole("Admin"), async
 }));
 
 app.post("/api/admin/learn-submissions/:id/reject", requireRole("Admin"), asyncRoute(async (req, res) => {
-    const result = await pool.query(`UPDATE learn_submissions
+    const result = await transactionQuery(`UPDATE learn_submissions s
         SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
-        WHERE submission_id = $2 AND status = 'pending' RETURNING submission_id`,
+        WHERE s.submission_id = $2 AND s.status = 'pending' AND EXISTS (
+            SELECT 1 FROM admins current_admin JOIN doctor_hospital dh ON dh.hospital_id = current_admin.hospital_id
+            WHERE current_admin.admin_id = $1 AND dh.doctor_id = s.doctor_id
+        ) RETURNING s.submission_id`,
     [req.authUser.id, req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: "Pending Learn article not found." });
     res.json({ message: "Learn article rejected." });
@@ -626,12 +1012,16 @@ app.get("/api/learn-articles/:id/photo", asyncRoute(async (req, res) => {
     res.type(article.photo_mime).set("Cache-Control", "public, max-age=3600").send(article.photo_bytes);
 }));
 
-app.get("/api/admin/content-updates", requireRole("Admin"), asyncRoute(async (_req, res) => {
+app.get("/api/admin/content-updates", requireRole("Admin"), asyncRoute(async (req, res) => {
     const result = await pool.query(`SELECT u.update_id, u.content_type, u.content_id, u.title, u.category,
         u.body, u.sources, u.photo_mime, encode(u.photo_bytes, 'base64') AS photo_base64, u.submitted_at,
         CONCAT(a.first_name, ' ', COALESCE(a.last_name, '')) AS author_name
         FROM content_update_submissions u JOIN users a ON a.user_id = u.author_id
-        WHERE u.status = 'pending' ORDER BY u.submitted_at ASC`);
+        WHERE u.status = 'pending' AND (u.content_type = 'patient_story' OR EXISTS (
+            SELECT 1 FROM learn_articles la JOIN doctor_hospital dh ON dh.doctor_id = la.doctor_id
+            JOIN admins current_admin ON current_admin.hospital_id = dh.hospital_id
+            WHERE current_admin.admin_id = $1 AND la.article_id = u.content_id
+        )) ORDER BY u.submitted_at ASC`, [req.authUser.id]);
     res.json(result.rows);
 }));
 
@@ -639,8 +1029,13 @@ app.post("/api/admin/content-updates/:id/approve", requireRole("Admin"), asyncRo
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
-        const pending = await client.query(`SELECT update_id, content_type, content_id, title, category, body, sources, photo_bytes, photo_mime
-            FROM content_update_submissions WHERE update_id = $1 AND status = 'pending' FOR UPDATE`, [req.params.id]);
+        const pending = await client.query(`SELECT u.update_id, u.content_type, u.content_id, u.title, u.category, u.body, u.sources, u.photo_bytes, u.photo_mime
+            FROM content_update_submissions u
+            WHERE u.update_id = $1 AND u.status = 'pending' AND (u.content_type = 'patient_story' OR EXISTS (
+                SELECT 1 FROM learn_articles la JOIN doctor_hospital dh ON dh.doctor_id = la.doctor_id
+                JOIN admins current_admin ON current_admin.hospital_id = dh.hospital_id
+                WHERE current_admin.admin_id = $2 AND la.article_id = u.content_id
+            )) FOR UPDATE`, [req.params.id, req.authUser.id]);
         if (!pending.rows.length) {
             await client.query("ROLLBACK");
             return res.status(404).json({ error: "Pending content update not found." });
@@ -676,9 +1071,13 @@ app.post("/api/admin/content-updates/:id/approve", requireRole("Admin"), asyncRo
 }));
 
 app.post("/api/admin/content-updates/:id/reject", requireRole("Admin"), asyncRoute(async (req, res) => {
-    const result = await pool.query(`UPDATE content_update_submissions
+    const result = await transactionQuery(`UPDATE content_update_submissions u
         SET status = 'rejected', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP
-        WHERE update_id = $2 AND status = 'pending' RETURNING update_id`, [req.authUser.id, req.params.id]);
+        WHERE u.update_id = $2 AND u.status = 'pending' AND (u.content_type = 'patient_story' OR EXISTS (
+            SELECT 1 FROM learn_articles la JOIN doctor_hospital dh ON dh.doctor_id = la.doctor_id
+            JOIN admins current_admin ON current_admin.hospital_id = dh.hospital_id
+            WHERE current_admin.admin_id = $1 AND la.article_id = u.content_id
+        )) RETURNING u.update_id`, [req.authUser.id, req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: "Pending content update not found." });
     res.json({ message: "Content update rejected." });
 }));
@@ -710,7 +1109,10 @@ app.delete("/api/admin/learn-articles/:id", requireRole("Admin"), asyncRoute(asy
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
-        const removed = await client.query("DELETE FROM learn_articles WHERE article_id = $1 RETURNING article_id", [req.params.id]);
+        const removed = await client.query(`DELETE FROM learn_articles la WHERE la.article_id = $1 AND EXISTS (
+            SELECT 1 FROM admins current_admin JOIN doctor_hospital dh ON dh.hospital_id = current_admin.hospital_id
+            WHERE current_admin.admin_id = $2 AND dh.doctor_id = la.doctor_id
+        ) RETURNING la.article_id`, [req.params.id, req.authUser.id]);
         if (!removed.rows.length) {
             await client.query("ROLLBACK");
             return res.status(404).json({ error: "Learn article not found." });
@@ -732,6 +1134,10 @@ app.delete("/api/admin/learn-articles/:id", requireRole("Admin"), asyncRoute(asy
 /* =========================
    LOGIN
    ========================= */
+
+app.get("/api/auth/me", authenticate, (req, res) => {
+    res.json({ user: { id: req.authUser.id, name: req.authUser.name, role: req.authUser.role } });
+});
 
 /**
  * @swagger
@@ -766,10 +1172,11 @@ app.delete("/api/admin/learn-articles/:id", requireRole("Admin"), asyncRoute(asy
  *       401:
  *         description: Invalid login information
  */
-app.post("/api/auth/login", asyncRoute(async (req, res) => {
+app.post("/api/auth/login", loginRateLimit, asyncRoute(async (req, res) => {
     const { contact, password, role } = req.body;
 
-    if (!contact || !password || !role) {
+    if (typeof contact !== "string" || !/^\+?[0-9]{7,15}$/.test(contact.trim()) || typeof password !== "string" ||
+        !password || password.length > 128 || !["Patient", "Doctor", "Admin"].includes(role)) {
         return res.status(400).json({
             error: "Enter your role, mobile number and password."
         });
@@ -795,8 +1202,9 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
     const user = result.rows[0];
 
     if (!user || user.account_role !== role) {
+        recordLoginFailure(req);
         return res.status(401).json({
-            error: "Those sign-in details do not match an account of this type."
+            error: "Incorrect role, mobile number, or password."
         });
     }
 
@@ -808,21 +1216,24 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
         : passwordMatches(password, user.password_hash);
 
     if (!valid) {
+        recordLoginFailure(req);
         return res.status(401).json({
-            error: "Incorrect mobile number or password."
+            error: "Incorrect role, mobile number, or password."
         });
     }
 
     if (isSeedAccount) {
-        await pool.query(
+        await transactionQuery(
             "UPDATE users SET password_hash = $1 WHERE user_id = $2",
             [hashPassword(password), user.user_id]
         );
     }
 
+    clearLoginFailures(req);
+
     res.json({
         message: "Signed in successfully.",
-        token: createAuthToken(user.user_id),
+        token: createAuthToken(user.user_id, user.account_role),
         user: {
             id: user.user_id,
             name: `${user.first_name} ${user.last_name || ""}`.trim(),
@@ -898,18 +1309,22 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
         gender
     } = req.body;
 
-    if (
-        ![firstName, contact, password, address, district, area]
-            .every(value => typeof value === "string" && value.trim())
-    ) {
+    if (![firstName, contact, password, address, district, area].every(value => typeof value === "string" && value.trim()) ||
+        (lastName !== undefined && typeof lastName !== "string") || (gender !== undefined && typeof gender !== "string")) {
         return res.status(400).json({
             error: "Complete all required registration fields."
         });
     }
 
-    if (password.length < 8) {
+    if (firstName.trim().length > 30 || (lastName || "").trim().length > 30 ||
+        !/^\+?[0-9]{7,15}$/.test(contact.trim()) || address.trim().length > 255 ||
+        district.trim().length > 100 || area.trim().length > 100 || (gender && gender.length > 10)) {
+        return res.status(400).json({ error: "Check the name, mobile number, and address field lengths." });
+    }
+
+    if (password.length < 8 || password.length > 128) {
         return res.status(400).json({
-            error: "Use a password with at least 8 characters."
+            error: "Use a password between 8 and 128 characters."
         });
     }
 
@@ -950,7 +1365,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
 
         res.status(201).json({
             message: "Your patient account is ready.",
-            token: createAuthToken(created.user_id),
+            token: createAuthToken(created.user_id, "Patient"),
             user: {
                 id: created.user_id,
                 name: `${created.first_name} ${created.last_name || ""}`.trim(),
@@ -976,6 +1391,15 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
    FRONTEND
    ========================= */
 
+// Keep unknown API requests from falling through to the single-page app. A
+// stale backend otherwise returns index.html with HTTP 404, which hides the
+// fact that the running server does not have the requested route yet.
+app.use("/api", (_req, res) => {
+    res.status(404).json({
+        error: "This API route is not available in the running backend. Stop the old server and run `npm start` from the project root."
+    });
+});
+
 app.use(express.static(path.join(__dirname, "../frontend")));
 
 app.get("*splat", (_req, res) =>
@@ -986,12 +1410,12 @@ app.get("*splat", (_req, res) =>
    START SERVER
    ========================= */
 
-initializeBlogSubmissions().then(initializeLearnArticles).then(initializeContentUpdates).then(initializeDatabaseRoutines).then(() => {
+initializeAuthSecret().then(initializeBlogSubmissions).then(initializeLearnArticles).then(initializeContentUpdates).then(initializeAppointments).then(initializePrescriptionAppointments).then(initializeDatabaseRoutines).then(() => {
     app.listen(PORT, () => {
         console.log(`CancerCare is running at http://localhost:${PORT}`);
         console.log(`Swagger API docs: http://localhost:${PORT}/api-docs`);
     });
 }).catch((error) => {
-    console.error("Could not initialize blog submissions:", error);
+    console.error("Could not initialize CancerCare backend:", error);
     process.exit(1);
 });

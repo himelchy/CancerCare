@@ -59,6 +59,40 @@ BEFORE UPDATE OF status ON content_update_submissions
 FOR EACH ROW
 EXECUTE FUNCTION record_submission_status_change();
 
+-- Archive a completed visit before removing it from active appointment lists.
+CREATE OR REPLACE FUNCTION archive_completed_appointment()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.status IS DISTINCT FROM NEW.status AND NEW.status = 'completed' THEN
+        INSERT INTO completed_appointment_history (
+            appointment_id, patient_id, doctor_id, reason, requested_date,
+            appointment_date, requested_at, marked_available_at, assigned_by,
+            assigned_at, completed_at, archived_at
+        ) VALUES (
+            NEW.appointment_id, NEW.patient_id, NEW.doctor_id, NEW.reason,
+            NEW.requested_date, NEW.appointment_date, NEW.requested_at,
+            NEW.marked_available_at, NEW.assigned_by, NEW.assigned_at,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        ) ON CONFLICT (appointment_id) DO NOTHING;
+
+        UPDATE prescriptions
+        SET visit_date = COALESCE(visit_date, NEW.appointment_date)
+        WHERE appointment_id = NEW.appointment_id;
+
+        DELETE FROM appointments WHERE appointment_id = NEW.appointment_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS appointment_completion_archive ON appointments;
+CREATE TRIGGER appointment_completion_archive
+AFTER UPDATE OF status ON appointments
+FOR EACH ROW
+EXECUTE FUNCTION archive_completed_appointment();
+
 -- Database-computed dashboard statistics used by GET /api/overview.
 CREATE OR REPLACE FUNCTION get_cancercare_statistics()
 RETURNS TABLE (
@@ -135,6 +169,16 @@ BEGIN
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Pending Learn article not found.' USING ERRCODE = 'P0002';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM admins admin_account
+        JOIN doctor_hospital dh ON dh.hospital_id = admin_account.hospital_id
+        WHERE admin_account.admin_id = p_admin_id
+          AND dh.doctor_id = submission_row.doctor_id
+    ) THEN
+        RAISE EXCEPTION 'This Learn article belongs to another hospital.' USING ERRCODE = 'P0002';
     END IF;
 
     INSERT INTO learn_articles

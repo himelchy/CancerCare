@@ -1321,6 +1321,107 @@ dialog > p:not(.eyebrow) {
   box-shadow: none;
   padding: 9px 13px;
 }
+.appointment-request-form {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f4f9f6;
+}
+.appointment-request-form label,
+.appointment-card label {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+.appointment-request-form textarea,
+.appointment-request-form input,
+.appointment-card input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d5e2dd;
+  border-radius: 8px;
+  font: inherit;
+}
+.appointment-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.appointment-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e1ebe6;
+  border-radius: 12px;
+  background: #fff;
+}
+.appointment-card > div { flex: 1 1 300px; }
+.appointment-card p { margin: 6px 0 0; color: #557578; font-size: 13px; }
+.appointment-card label { flex: 0 1 190px; }
+.appointment-card .button,
+.doctor-result > .button { flex: 0 0 auto; padding: 9px 13px; }
+.doctor-result { flex-wrap: wrap; }
+.doctor-result .appointment-request-form { flex-basis: 100%; }
+.submission-status.doctor_available { color: #8a6410; background: #fff2cc; }
+.submission-status.assigned { color: #24764a; background: #e4f5eb; }
+  .doctor-appointment-card { align-items: flex-start; }
+  .doctor-visit-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; }
+.prescription-editor {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 12px;
+  background: #f4f9f6;
+}
+.prescription-editor h3,
+.prescription-card h3 { margin: 0; }
+.prescription-editor label { display: grid; gap: 7px; color: var(--ink); font-size: 13px; }
+.prescription-editor input,
+.prescription-editor select,
+.prescription-editor textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d5e2dd;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+}
+.prescription-medicine-list { display: grid; gap: 10px; }
+.prescription-medicine-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dce8e2;
+  border-radius: 10px;
+  background: #fff;
+}
+.prescription-actions { display: flex; align-items: center; gap: 12px; }
+.prescription-actions p { margin: 0; color: #a4493e; }
+.prescription-list { display: grid; gap: 14px; margin-top: 18px; }
+.prescription-card {
+  padding: 20px;
+  border: 1px solid #e1ebe6;
+  border-radius: 12px;
+  background: #fff;
+}
+.prescription-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.prescription-heading small { color: #557578; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.prescription-heading h3 { margin-top: 5px; }
+.prescription-heading > span { color: #557578; font-size: 13px; }
+.prescription-medicines { display: grid; gap: 10px; margin: 18px 0; padding: 0; list-style: none; }
+.prescription-medicines li { padding: 12px; border-radius: 8px; background: #f4f9f6; }
+.prescription-medicines li > span { margin-left: 10px; color: #557578; }
+.prescription-medicines li p { margin: 5px 0 0; color: #557578; font-size: 13px; }
+.prescription-notes { margin: 12px 0 0; color: #355052; line-height: 1.6; }
 @media (max-width: 760px) {
   .workspace-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1331,6 +1432,7 @@ dialog > p:not(.eyebrow) {
   .workspace-panel {
     padding: 20px;
   }
+  .prescription-medicine-row { grid-template-columns: 1fr; }
   .admin-content-row {
     align-items: flex-start;
     flex-direction: column;
