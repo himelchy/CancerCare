@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs/promises");
 const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
@@ -175,6 +176,11 @@ const initializeContentUpdates = async () => {
         WHERE status = 'pending'`);
 };
 
+const initializeDatabaseRoutines = async () => {
+    const sql = await fs.readFile(path.join(__dirname, "submission_audit.sql"), "utf8");
+    await pool.query(sql);
+};
+
 /* =========================
    HEALTH
    ========================= */
@@ -211,11 +217,7 @@ app.get("/api/health", asyncRoute(async (_req, res) => {
  *         description: Overview counts
  */
 app.get("/api/overview", asyncRoute(async (_req, res) => {
-    const result = await pool.query(`SELECT
-        (SELECT COUNT(*) FROM hospitals)::int AS hospitals,
-        (SELECT COUNT(*) FROM doctors)::int AS doctors,
-        (SELECT COUNT(*) FROM cancers)::int AS cancer_types,
-        (SELECT COUNT(*) FROM blogposts)::int AS stories`);
+    const result = await pool.query("SELECT * FROM get_cancercare_statistics()");
 
     res.json(result.rows[0]);
 }));
@@ -471,31 +473,12 @@ app.get("/api/admin/blog-submissions", requireRole("Admin"), asyncRoute(async (_
 }));
 
 app.post("/api/admin/blog-submissions/:id/approve", requireRole("Admin"), asyncRoute(async (req, res) => {
-    const client = await pool.connect();
     try {
-        await client.query("BEGIN");
-        const pending = await client.query(`SELECT submission_id, patient_id, title, body
-            FROM blog_submissions WHERE submission_id = $1 AND status = 'pending' FOR UPDATE`, [req.params.id]);
-        if (!pending.rows.length) {
-            await client.query("ROLLBACK");
-            return res.status(404).json({ error: "Pending story not found." });
-        }
-
-        const submission = pending.rows[0];
-        const blog = await client.query(`INSERT INTO blogposts (title, feel, post_date)
-            VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING blog_id`, [submission.title, submission.body]);
-        await client.query("INSERT INTO patient_blogpost (patient_id, blog_id, write_date) VALUES ($1, $2, CURRENT_DATE)",
-            [submission.patient_id, blog.rows[0].blog_id]);
-        await client.query(`UPDATE blog_submissions
-            SET status = 'approved', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP, blog_id = $2
-            WHERE submission_id = $3`, [req.authUser.id, blog.rows[0].blog_id, submission.submission_id]);
-        await client.query("COMMIT");
+        await pool.query("CALL approve_blog_submission($1, $2)", [req.params.id, req.authUser.id]);
         res.json({ message: "Story approved and published." });
     } catch (error) {
-        await client.query("ROLLBACK");
+        if (error.code === "P0002") return res.status(404).json({ error: error.message });
         throw error;
-    } finally {
-        client.release();
     }
 }));
 
@@ -618,31 +601,12 @@ app.get("/api/admin/learn-submissions", requireRole("Admin"), asyncRoute(async (
 }));
 
 app.post("/api/admin/learn-submissions/:id/approve", requireRole("Admin"), asyncRoute(async (req, res) => {
-    const client = await pool.connect();
     try {
-        await client.query("BEGIN");
-        const pending = await client.query(`SELECT submission_id, doctor_id, title, category, body, sources, photo_bytes, photo_mime
-            FROM learn_submissions WHERE submission_id = $1 AND status = 'pending' FOR UPDATE`, [req.params.id]);
-        if (!pending.rows.length) {
-            await client.query("ROLLBACK");
-            return res.status(404).json({ error: "Pending Learn article not found." });
-        }
-
-        const submission = pending.rows[0];
-        const article = await client.query(`INSERT INTO learn_articles
-            (doctor_id, title, category, body, sources, photo_bytes, photo_mime)
-            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING article_id`,
-        [submission.doctor_id, submission.title, submission.category, submission.body, submission.sources, submission.photo_bytes, submission.photo_mime]);
-        await client.query(`UPDATE learn_submissions
-            SET status = 'approved', reviewed_by = $1, reviewed_at = CURRENT_TIMESTAMP, article_id = $2
-            WHERE submission_id = $3`, [req.authUser.id, article.rows[0].article_id, submission.submission_id]);
-        await client.query("COMMIT");
+        await pool.query("CALL approve_learn_submission($1, $2)", [req.params.id, req.authUser.id]);
         res.json({ message: "Learn article approved and published." });
     } catch (error) {
-        await client.query("ROLLBACK");
+        if (error.code === "P0002") return res.status(404).json({ error: error.message });
         throw error;
-    } finally {
-        client.release();
     }
 }));
 
@@ -1022,7 +986,7 @@ app.get("*splat", (_req, res) =>
    START SERVER
    ========================= */
 
-initializeBlogSubmissions().then(initializeLearnArticles).then(initializeContentUpdates).then(() => {
+initializeBlogSubmissions().then(initializeLearnArticles).then(initializeContentUpdates).then(initializeDatabaseRoutines).then(() => {
     app.listen(PORT, () => {
         console.log(`CancerCare is running at http://localhost:${PORT}`);
         console.log(`Swagger API docs: http://localhost:${PORT}/api-docs`);
