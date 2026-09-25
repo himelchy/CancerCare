@@ -100,6 +100,7 @@
         ><button class="menu" aria-label="Menu">☰</button>
         <div class="links">
           <a href="#care">Find care</a><a href="#learn">Learn</a
+          ><a href="#treatment-search">Medicine guide</a
           ><a href="#stories">Stories</a><a href="#about">About us</a>
         </div>
         <button id="openLogin" class="login">◌ &nbsp; Sign in</button>
@@ -190,6 +191,42 @@
           </div>
           <div class="results" id="directoryResults">
             <p>Loading care options…</p>
+          </div>
+        </div>
+      </section>
+      <section id="treatment-search" class="section treatment-section">
+        <div class="container">
+          <div class="heading">
+            <div>
+              <p class="eyebrow">— &nbsp; TREATMENT INFORMATION</p>
+              <h2>Explore medicine information by cancer type.</h2>
+            </div>
+            <p>Choose a cancer type and optionally a stage or medicine name.</p>
+          </div>
+          <form id="treatmentSearchForm" class="treatment-search-form">
+            <label>Cancer type
+              <select id="treatmentCancer" name="cancer_id" required>
+                <option value="">Loading cancer types…</option>
+              </select>
+            </label>
+            <label>Stage (optional)
+              <select id="treatmentStage" name="stage">
+                <option value="">Any / not specified</option>
+                <option value="0">Stage 0</option>
+                <option value="I">Stage I</option>
+                <option value="II">Stage II</option>
+                <option value="III">Stage III</option>
+                <option value="IV">Stage IV</option>
+              </select>
+            </label>
+            <label>Medicine name (optional)
+              <input id="treatmentMedicine" name="medicine" maxlength="100" placeholder="e.g. tamoxifen" />
+            </label>
+            <button class="button" type="submit">Search medicines <b>→</b></button>
+          </form>
+          <p class="treatment-disclaimer">This is general educational information, not a treatment recommendation. Medicine use depends on cancer subtype, test results, other health conditions, and a clinician’s assessment. Research outcomes below describe specific study groups and are not an individual success rate.</p>
+          <div id="treatmentResults" class="treatment-results" aria-live="polite">
+            <p>Select a cancer type to view available medicine information.</p>
           </div>
         </div>
       </section>

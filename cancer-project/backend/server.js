@@ -1,3 +1,4 @@
+
 const path = require("path");
 const fs = require("fs/promises");
 const crypto = require("crypto");
@@ -452,6 +453,11 @@ const initializePrescriptionAppointments = async () => {
 
 const initializeDatabaseRoutines = async () => {
     const sql = await fs.readFile(path.join(__dirname, "submission_audit.sql"), "utf8");
+    await pool.query(sql);
+};
+
+const initializeTreatmentInformation = async () => {
+    const sql = await fs.readFile(path.join(__dirname, "treatment_information.sql"), "utf8");
     await pool.query(sql);
 };
 
@@ -1019,6 +1025,38 @@ app.get("/api/cancers", asyncRoute(async (_req, res) => {
         LIMIT 12`);
 
     res.json(result.rows);
+}));
+
+app.get("/api/treatment-information", asyncRoute(async (req, res) => {
+    const cancerId = Number(req.query.cancer_id);
+    const stage = typeof req.query.stage === "string" ? req.query.stage.trim().toUpperCase() : "";
+    const medicineSearch = typeof req.query.medicine === "string" ? req.query.medicine.trim() : "";
+
+    if (!Number.isInteger(cancerId) || cancerId < 1) {
+        return res.status(400).json({ error: "Choose a cancer type to search." });
+    }
+    if (stage && !["0", "I", "II", "III", "IV"].includes(stage)) {
+        return res.status(400).json({ error: "Choose a valid cancer stage." });
+    }
+    if (medicineSearch.length > 100) {
+        return res.status(400).json({ error: "Keep the medicine search under 100 characters." });
+    }
+
+    const result = await pool.query(`SELECT
+        t.information_id, t.medicine_name, t.treatment_class, t.indication_summary,
+        t.how_it_works, t.common_side_effects, t.serious_side_effects, t.stage_scope,
+        t.outcome_summary, t.outcome_population,
+        t.information_source_title, t.information_source_url,
+        t.outcome_source_title, t.outcome_source_url, t.reviewed_at,
+        c.cancer_name
+        FROM cancer_treatment_information t
+        JOIN cancers c ON c.cancer_id = t.cancer_id
+        WHERE t.cancer_id = $1
+          AND ($2::TEXT = '' OR t.stage_scope IS NULL OR UPPER(t.stage_scope) = $2)
+          AND ($3::TEXT = '' OR t.medicine_name ILIKE '%' || $3 || '%')
+        ORDER BY t.medicine_name`, [cancerId, stage, medicineSearch]);
+
+    res.set("Cache-Control", "public, max-age=300").json(result.rows);
 }));
 
 /* =========================

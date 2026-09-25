@@ -13,6 +13,10 @@ if (!currentUser?.token) {
 }
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" }[char]));
+const safeExternalUrl = (value = "") => {
+  try { const url = new URL(value); return url.protocol === "https:" ? url.href : ""; }
+  catch { return ""; }
+};
 function formatSqlDate(value) {
   if (!value) return "";
   // PostgreSQL DATE values are serialized by node-postgres as ISO timestamps;
@@ -126,6 +130,55 @@ async function loadDirectory(query = "") {
 async function loadGuides() {
   try { const guides = await request("/cancers"); const symbols = ["O", "+", "*", "#"]; $("#guideGrid").innerHTML = guides.slice(0, 6).map((guide, index) => `<article class="guide"><i class="g${index % 4}">${symbols[index % 4]}</i><div><small>UNDERSTANDING CANCER</small><h3>${escapeHtml(guide.cancer_name)}</h3><p>${escapeHtml(guide.causes || "Learn about this cancer type and prepare for care.")}</p><a href="#care">Find relevant care &rarr;</a></div></article>`).join(""); }
   catch (error) { $("#guideGrid").innerHTML = `<p>${escapeHtml(error.message)}</p>`; }
+}
+
+async function loadTreatmentCancerOptions() {
+  const select = $("#treatmentCancer");
+  try {
+    const cancers = await request("/cancers");
+    select.innerHTML = `<option value="">Choose a cancer type</option>${cancers.map((cancer) => `<option value="${Number(cancer.cancer_id)}">${escapeHtml(cancer.cancer_name)}</option>`).join("")}`;
+  } catch (error) {
+    select.innerHTML = `<option value="">Cancer types unavailable</option>`;
+    $("#treatmentResults").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function searchTreatmentInformation() {
+  const cancerId = $("#treatmentCancer").value;
+  const stage = $("#treatmentStage").value;
+  const medicine = $("#treatmentMedicine").value.trim();
+  const results = $("#treatmentResults");
+  if (!cancerId) {
+    results.innerHTML = "<p>Choose a cancer type to search.</p>";
+    return;
+  }
+
+  const params = new URLSearchParams({ cancer_id: cancerId });
+  if (stage) params.set("stage", stage);
+  if (medicine) params.set("medicine", medicine);
+  results.innerHTML = "<p>Searching reviewed medicine information…</p>";
+
+  try {
+    const items = await request(`/treatment-information?${params.toString()}`);
+    if (!items.length) {
+      results.innerHTML = "<p>No reviewed medicine information matches that search yet.</p>";
+      return;
+    }
+    results.innerHTML = items.map((item) => {
+      const informationUrl = safeExternalUrl(item.information_source_url);
+      const outcomeUrl = safeExternalUrl(item.outcome_source_url);
+      return `<article class="treatment-card">
+        <div class="treatment-card-heading"><div><small>${escapeHtml(item.cancer_name)} · ${escapeHtml(item.treatment_class)}</small><h3>${escapeHtml(item.medicine_name)}</h3></div><span>Educational reference</span></div>
+        <p class="treatment-indication">${escapeHtml(item.indication_summary)}</p>
+        ${item.stage_scope ? `<p class="treatment-stage-scope"><b>Stage scope:</b> ${escapeHtml(item.stage_scope)}</p>` : `<p class="treatment-stage-scope"><b>Stage:</b> The reference is not limited to one numbered stage. Biomarkers and clinical details still determine whether it applies.</p>`}
+        <div class="treatment-details"><section><h4>How it works</h4><p>${escapeHtml(item.how_it_works)}</p></section><section><h4>Possible side effects</h4><p>${escapeHtml(item.common_side_effects)}</p>${item.serious_side_effects ? `<p class="treatment-serious"><b>Important risks:</b> ${escapeHtml(item.serious_side_effects)}</p>` : ""}</section></div>
+        <section class="treatment-outcomes"><h4>Research outcome information</h4>${item.outcome_summary ? `<p>${escapeHtml(item.outcome_summary)}</p><p class="treatment-population"><b>Study population:</b> ${escapeHtml(item.outcome_population || "See the linked study for population details.")}</p>${outcomeUrl ? `<a href="${escapeHtml(outcomeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.outcome_source_title || "Read the outcome source")} ↗</a>` : ""}` : `<p>No sourced outcome estimate is listed for this medicine in the current reference catalog. A single success rate cannot be inferred from the medicine name alone.</p>`}</section>
+        <p class="treatment-source">${informationUrl ? `<a href="${escapeHtml(informationUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.information_source_title)} ↗</a>` : escapeHtml(item.information_source_title)} · reviewed ${escapeHtml(formatSqlDate(item.reviewed_at))}</p>
+      </article>`;
+    }).join("");
+  } catch (error) {
+    results.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function loadLearnArticles() {
@@ -636,9 +689,10 @@ document.querySelectorAll(".tabs button").forEach((button) => button.addEventLis
 $("#searchButton").addEventListener("click", () => loadDirectory($("#directorySearch").value));
 $("#directorySearch").addEventListener("keydown", (event) => { if (event.key === "Enter") loadDirectory(event.target.value); });
 $("#directoryResults").addEventListener("click", (event) => { const card = event.target.closest("[data-hospital]"); if (card) openHospital(card.dataset.hospital); });
+$("#treatmentSearchForm").addEventListener("submit", (event) => { event.preventDefault(); searchTreatmentInformation(); });
 $(".menu").addEventListener("click", () => $(".links").classList.toggle("show"));
 function loadPublicPage() {
-  loadOverview(); loadDirectory(); loadGuides(); loadLearnArticles(); loadStories();
+  loadOverview(); loadDirectory(); loadGuides(); loadTreatmentCancerOptions(); loadLearnArticles(); loadStories();
 }
 
 async function restoreSession() {
