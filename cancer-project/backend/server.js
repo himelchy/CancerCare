@@ -236,6 +236,12 @@ const initializeBlogSubmissions = async () => {
         reviewed_at TIMESTAMPTZ,
         blog_id INTEGER REFERENCES blogposts(blog_id) ON DELETE SET NULL
     )`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS doctor_id INTEGER REFERENCES doctors(doctor_id) ON DELETE SET NULL`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS doctor_rating INTEGER CHECK (doctor_rating BETWEEN 1 AND 5)`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS doctor_review TEXT`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS hospital_id INTEGER REFERENCES hospitals(hospital_id) ON DELETE SET NULL`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS hospital_rating INTEGER CHECK (hospital_rating BETWEEN 1 AND 5)`);
+    await pool.query(`ALTER TABLE blog_submissions ADD COLUMN IF NOT EXISTS hospital_review TEXT`);
 };
 
 const initializeLearnArticles = async () => {
@@ -328,6 +334,7 @@ const initializeAppointments = async () => {
         appointment_id SERIAL PRIMARY KEY,
         patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
         doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE CASCADE,
+        hospital_id INTEGER REFERENCES hospitals(hospital_id) ON DELETE SET NULL,
         reason TEXT NOT NULL,
         requested_date DATE,
         appointment_date DATE,
@@ -338,6 +345,7 @@ const initializeAppointments = async () => {
         assigned_by INTEGER REFERENCES admins(admin_id),
         assigned_at TIMESTAMPTZ
     )`);
+    await pool.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS hospital_id INTEGER REFERENCES hospitals(hospital_id) ON DELETE SET NULL`);
     // Upgrade databases created before visit completion was added.
     await pool.query(`ALTER TABLE appointments DROP CONSTRAINT IF EXISTS appointments_status_check`);
     await pool.query(`ALTER TABLE appointments ADD CONSTRAINT appointments_status_check
@@ -346,6 +354,7 @@ const initializeAppointments = async () => {
         appointment_id INTEGER PRIMARY KEY,
         patient_id INTEGER NOT NULL,
         doctor_id INTEGER NOT NULL,
+        hospital_id INTEGER,
         reason TEXT NOT NULL,
         requested_date DATE,
         appointment_date DATE,
@@ -356,10 +365,70 @@ const initializeAppointments = async () => {
         completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         archived_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
+    await pool.query(`ALTER TABLE completed_appointment_history ADD COLUMN IF NOT EXISTS hospital_id INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS appointments_patient_status_idx
         ON appointments (patient_id, status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS appointments_doctor_status_idx
         ON appointments (doctor_id, status)`);
+};
+
+const initializeRatings = async () => {
+    await pool.query(`ALTER TABLE doctors ADD COLUMN IF NOT EXISTS rating NUMERIC(3,2) NOT NULL DEFAULT 0`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS blogpost_doc (
+        blogpost_doc_id SERIAL PRIMARY KEY,
+        blog_id INTEGER NOT NULL REFERENCES blogposts(blog_id) ON DELETE CASCADE,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        review TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (blog_id, patient_id, doctor_id)
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS blogpost_hospital (
+        blogpost_hospital_id SERIAL PRIMARY KEY,
+        blog_id INTEGER NOT NULL REFERENCES blogposts(blog_id) ON DELETE CASCADE,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        hospital_id INTEGER NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        review TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (blog_id, patient_id, hospital_id)
+    )`);
+    // Upgrade rating tables created before ratings were tied to a patient.
+    await pool.query(`ALTER TABLE blogpost_hospital ADD COLUMN IF NOT EXISTS patient_id INTEGER REFERENCES patient(patient_id) ON DELETE CASCADE`);
+    await pool.query(`ALTER TABLE blogpost_hospital ADD COLUMN IF NOT EXISTS review TEXT`);
+    await pool.query(`ALTER TABLE blogpost_hospital ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    await pool.query(`UPDATE blogpost_hospital bh SET patient_id = pb.patient_id
+        FROM patient_blogpost pb WHERE pb.blog_id = bh.blog_id AND bh.patient_id IS NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS blogpost_hospital_blog_patient_hospital_idx
+        ON blogpost_hospital (blog_id, patient_id, hospital_id)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS doctor_ratings (
+        rating_id SERIAL PRIMARY KEY,
+        appointment_id INTEGER NOT NULL REFERENCES completed_appointment_history(appointment_id) ON DELETE CASCADE,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        doctor_id INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        review TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (appointment_id, patient_id, doctor_id)
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS hospital_ratings (
+        rating_id SERIAL PRIMARY KEY,
+        appointment_id INTEGER NOT NULL REFERENCES completed_appointment_history(appointment_id) ON DELETE CASCADE,
+        patient_id INTEGER NOT NULL REFERENCES patient(patient_id) ON DELETE CASCADE,
+        hospital_id INTEGER NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        review TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (appointment_id, patient_id, hospital_id)
+    )`);
+    await pool.query(`UPDATE doctors d SET rating = COALESCE((
+        SELECT ROUND(AVG(all_ratings.rating)::numeric, 2) FROM (
+            SELECT rating FROM doctor_ratings WHERE doctor_id = d.doctor_id
+            UNION ALL
+            SELECT rating FROM blogpost_doc WHERE doctor_id = d.doctor_id
+        ) all_ratings
+    ), 0)`);
 };
 
 const initializePrescriptionAppointments = async () => {
@@ -529,7 +598,24 @@ app.get("/api/doctors", asyncRoute(async (req, res) => {
         d.gender,
         d.experience_years,
         d.fees,
+        d.rating,
+        d.qualification,
         d.area,
+        COALESCE((
+            SELECT string_agg(hospital.hospital_name, ', ' ORDER BY hospital.hospital_name)
+            FROM doctor_hospital dh
+            JOIN hospitals hospital ON hospital.hospital_id = dh.hospital_id
+            WHERE dh.doctor_id = d.doctor_id
+        ), '') AS hospitals,
+        COALESCE((
+            SELECT string_agg(
+                concat(stage_cancer.cancer_name, ' (Stage ', ds.stage_no, ')'),
+                ', ' ORDER BY stage_cancer.cancer_name, ds.stage_no
+            )
+            FROM doctor_stage ds
+            JOIN cancers stage_cancer ON stage_cancer.cancer_id = ds.cancer_id
+            WHERE ds.doctor_id = d.doctor_id
+        ), '') AS stage_specialties,
         COALESCE(
             string_agg(DISTINCT c.cancer_name, ', '),
             'Cancer care'
@@ -583,13 +669,41 @@ app.post("/api/appointments", requireRole("Patient"), asyncRoute(async (req, res
 }));
 
 app.get("/api/appointments/mine", requireRole("Patient"), asyncRoute(async (req, res) => {
-    const result = await pool.query(`SELECT ap.appointment_id, ap.reason, ap.requested_date,
+    const result = await pool.query(`SELECT ap.appointment_id, ap.doctor_id, ap.hospital_id, ap.reason, ap.requested_date,
         ap.appointment_date, ap.status, ap.requested_at, ap.marked_available_at, ap.assigned_at,
         CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name, d.area
         FROM appointments ap JOIN doctors d ON d.doctor_id = ap.doctor_id
         JOIN users u ON u.user_id = d.doctor_id
         WHERE ap.patient_id = $1 ORDER BY ap.requested_at DESC`, [req.authUser.id]);
     res.json(result.rows);
+}));
+
+app.get("/api/appointments/history", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const result = await pool.query(`SELECT ca.appointment_id, ca.doctor_id, ca.hospital_id, ca.reason,
+        ca.appointment_date, ca.completed_at,
+        CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name,
+        d.area,
+        h.hospital_name
+        FROM completed_appointment_history ca
+        JOIN doctors d ON d.doctor_id = ca.doctor_id
+        JOIN users u ON u.user_id = d.doctor_id
+        LEFT JOIN hospitals h ON h.hospital_id = ca.hospital_id
+        WHERE ca.patient_id = $1 ORDER BY ca.completed_at DESC`, [req.authUser.id]);
+    res.json(result.rows);
+}));
+
+app.get("/api/patient/blog-rating-options", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const [doctors, hospitals] = await Promise.all([
+        pool.query(`SELECT DISTINCT h.doctor_id, CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name
+            FROM completed_appointment_history h JOIN users u ON u.user_id = h.doctor_id
+            WHERE h.patient_id = $1 ORDER BY doctor_name`, [req.authUser.id]),
+        pool.query(`SELECT DISTINCT COALESCE(h.hospital_id, dh.hospital_id) AS hospital_id, hospital.hospital_name
+            FROM completed_appointment_history h
+            LEFT JOIN doctor_hospital dh ON dh.doctor_id = h.doctor_id AND h.hospital_id IS NULL
+            JOIN hospitals hospital ON hospital.hospital_id = COALESCE(h.hospital_id, dh.hospital_id)
+            WHERE h.patient_id = $1 ORDER BY hospital.hospital_name`, [req.authUser.id])
+    ]);
+    res.json({ doctors: doctors.rows, hospitals: hospitals.rows });
 }));
 
 app.get("/api/prescriptions/mine", requireRole("Patient"), asyncRoute(async (req, res) => {
@@ -785,6 +899,7 @@ app.post("/api/admin/appointments/:id/assign", requireRole("Admin"), asyncRoute(
         return res.status(400).json({ error: "Choose a valid appointment date." });
     }
     const result = await transactionQuery(`UPDATE appointments SET status = 'assigned', appointment_date = $1,
+        hospital_id = (SELECT current_admin.hospital_id FROM admins current_admin WHERE current_admin.admin_id = $2),
         assigned_by = $2, assigned_at = CURRENT_TIMESTAMP
         WHERE appointment_id = $3 AND status = 'doctor_available'
         AND EXISTS (SELECT 1 FROM admins current_admin
@@ -794,6 +909,78 @@ app.post("/api/admin/appointments/:id/assign", requireRole("Admin"), asyncRoute(
     [appointmentDate, req.authUser.id, req.params.id]);
     if (!result.rowCount) return res.status(409).json({ error: "Only requests marked available by the doctor can be assigned." });
     res.json({ message: "Appointment assigned to the doctor." });
+}));
+
+app.post("/api/appointments/:id/rate-doctor", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const appointmentId = Number(req.params.id);
+    const doctorId = Number(req.body.doctor_id);
+    const rating = Number(req.body.rating);
+    const review = typeof req.body.review === "string" ? req.body.review.trim() : "";
+
+    if (!Number.isInteger(appointmentId) || appointmentId < 1) {
+        return res.status(400).json({ error: "Choose a valid completed appointment." });
+    }
+    if (!Number.isInteger(doctorId) || doctorId < 1) {
+        return res.status(400).json({ error: "Pick the doctor you want to rate." });
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: "Doctor rating must be between 1 and 5." });
+    }
+    if (review.length > 1000) {
+        return res.status(400).json({ error: "Keep the doctor review under 1,000 characters." });
+    }
+
+    const visit = await pool.query(`SELECT appointment_id, patient_id, doctor_id, hospital_id
+        FROM completed_appointment_history
+        WHERE appointment_id = $1 AND patient_id = $2 AND doctor_id = $3`, [appointmentId, req.authUser.id, doctorId]);
+    if (!visit.rowCount) {
+        return res.status(403).json({ error: "You can only rate a doctor from a completed appointment that belongs to you." });
+    }
+
+    const result = await transactionQuery(`INSERT INTO doctor_ratings (appointment_id, patient_id, doctor_id, rating, review)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (appointment_id, patient_id, doctor_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP
+        RETURNING rating_id`,
+    [appointmentId, req.authUser.id, doctorId, rating, review || null]);
+    res.status(201).json({ message: "Doctor rating saved for this completed visit.", rating: result.rows[0] });
+}));
+
+app.post("/api/appointments/:id/rate-hospital", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const appointmentId = Number(req.params.id);
+    const hospitalId = Number(req.body.hospital_id);
+    const rating = Number(req.body.rating);
+    const review = typeof req.body.review === "string" ? req.body.review.trim() : "";
+
+    if (!Number.isInteger(appointmentId) || appointmentId < 1) {
+        return res.status(400).json({ error: "Choose a valid completed appointment." });
+    }
+    if (!Number.isInteger(hospitalId) || hospitalId < 1) {
+        return res.status(400).json({ error: "Pick the hospital you want to rate." });
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: "Hospital rating must be between 1 and 5." });
+    }
+    if (review.length > 1000) {
+        return res.status(400).json({ error: "Keep the hospital review under 1,000 characters." });
+    }
+
+    const visit = await pool.query(`SELECT h.appointment_id, h.patient_id, h.doctor_id, COALESCE(h.hospital_id, dh.hospital_id) AS hospital_id
+        FROM completed_appointment_history h
+        LEFT JOIN doctor_hospital dh ON dh.doctor_id = h.doctor_id AND h.hospital_id IS NULL
+        WHERE h.appointment_id = $1 AND h.patient_id = $2
+          AND COALESCE(h.hospital_id, dh.hospital_id) = $3`, [appointmentId, req.authUser.id, hospitalId]);
+    if (!visit.rowCount) {
+        return res.status(403).json({ error: "You can only rate the hospital tied to your completed appointment." });
+    }
+
+    const result = await transactionQuery(`INSERT INTO hospital_ratings (appointment_id, patient_id, hospital_id, rating, review)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (appointment_id, patient_id, hospital_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP
+        RETURNING rating_id`,
+    [appointmentId, req.authUser.id, hospitalId, rating, review || null]);
+    res.status(201).json({ message: "Hospital rating saved for this completed visit.", rating: result.rows[0] });
 }));
 
 /* =========================
@@ -855,6 +1042,28 @@ app.get("/api/blogs", asyncRoute(async (_req, res) => {
     res.json(result.rows);
 }));
 
+app.get("/api/blogs/:id/ratings", asyncRoute(async (req, res) => {
+    const blogId = Number(req.params.id);
+    if (!Number.isInteger(blogId) || blogId < 1) {
+        return res.status(400).json({ error: "Choose a valid blog post." });
+    }
+
+    const [doctorRatings, hospitalRatings] = await Promise.all([
+        pool.query(`SELECT bd.blog_id, bd.doctor_id, CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) AS doctor_name,
+            bd.rating, bd.review, bd.created_at
+            FROM blogpost_doc bd JOIN users u ON u.user_id = bd.doctor_id
+            WHERE bd.blog_id = $1 ORDER BY bd.created_at DESC`, [blogId]),
+        pool.query(`SELECT bh.blog_id, bh.hospital_id, h.hospital_name, bh.rating, bh.review, bh.created_at
+            FROM blogpost_hospital bh JOIN hospitals h ON h.hospital_id = bh.hospital_id
+            WHERE bh.blog_id = $1 ORDER BY bh.created_at DESC`, [blogId])
+    ]);
+
+    res.json({
+        doctors: doctorRatings.rows,
+        hospitals: hospitalRatings.rows
+    });
+}));
+
 app.get("/api/blogs/mine", requireRole("Patient"), asyncRoute(async (req, res) => {
     const result = await pool.query(`SELECT b.blog_id, b.title, b.feel, b.post_date,
         (SELECT u.status FROM content_update_submissions u
@@ -896,14 +1105,119 @@ app.get("/api/blog-submissions/mine", requireRole("Patient"), asyncRoute(async (
 app.post("/api/blog-submissions", requireRole("Patient"), asyncRoute(async (req, res) => {
     const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
     const body = typeof req.body.body === "string" ? req.body.body.trim() : "";
+    const doctorId = req.body.doctor_id ? Number(req.body.doctor_id) : null;
+    const doctorRating = req.body.doctor_rating ? Number(req.body.doctor_rating) : null;
+    const doctorReview = typeof req.body.doctor_review === "string" ? req.body.doctor_review.trim() : "";
+    const hospitalId = req.body.hospital_id ? Number(req.body.hospital_id) : null;
+    const hospitalRating = req.body.hospital_rating ? Number(req.body.hospital_rating) : null;
+    const hospitalReview = typeof req.body.hospital_review === "string" ? req.body.hospital_review.trim() : "";
     if (!title || !body || title.length > 200 || body.length > 10000) {
         return res.status(400).json({ error: "Add a title and a story (up to 10,000 characters)." });
     }
+    if ((doctorId === null) !== (doctorRating === null) ||
+        (doctorId !== null && (!Number.isInteger(doctorId) || doctorId < 1 || !Number.isInteger(doctorRating) || doctorRating < 1 || doctorRating > 5)) ||
+        (hospitalId === null) !== (hospitalRating === null) ||
+        (hospitalId !== null && (!Number.isInteger(hospitalId) || hospitalId < 1 || !Number.isInteger(hospitalRating) || hospitalRating < 1 || hospitalRating > 5)) ||
+        doctorReview.length > 1000 || hospitalReview.length > 1000 ||
+        (!doctorRating && doctorReview) || (!hospitalRating && hospitalReview)) {
+        return res.status(400).json({ error: "For each optional rating, choose a provider and a score from 1 to 5. Reviews must be under 1,000 characters." });
+    }
 
-    const result = await transactionQuery(`INSERT INTO blog_submissions (patient_id, title, body)
-        VALUES ($1, $2, $3) RETURNING submission_id, title, status, submitted_at`,
-    [req.authUser.id, title, body]);
+    if (doctorId !== null) {
+        const visit = await pool.query(`SELECT 1 FROM completed_appointment_history WHERE patient_id = $1 AND doctor_id = $2`, [req.authUser.id, doctorId]);
+        if (!visit.rowCount) return res.status(403).json({ error: "You can only rate a doctor you have seen at a completed visit." });
+    }
+    if (hospitalId !== null) {
+        const visit = await pool.query(`SELECT 1 FROM completed_appointment_history h
+            LEFT JOIN doctor_hospital dh ON dh.doctor_id = h.doctor_id AND h.hospital_id IS NULL
+            WHERE h.patient_id = $1 AND COALESCE(h.hospital_id, dh.hospital_id) = $2`, [req.authUser.id, hospitalId]);
+        if (!visit.rowCount) return res.status(403).json({ error: "You can only rate a hospital from a completed visit." });
+    }
+
+    const result = await transactionQuery(`INSERT INTO blog_submissions
+        (patient_id, title, body, doctor_id, doctor_rating, doctor_review, hospital_id, hospital_rating, hospital_review)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING submission_id, title, status, submitted_at`,
+    [req.authUser.id, title, body, doctorId, doctorRating, doctorReview || null, hospitalId, hospitalRating, hospitalReview || null]);
     res.status(201).json({ message: "Your story was sent to an admin for review.", submission: result.rows[0] });
+}));
+
+app.post("/api/blogs/:id/rate-doctor", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const blogId = Number(req.params.id);
+    const doctorId = Number(req.body.doctor_id);
+    const rating = Number(req.body.rating);
+    const review = typeof req.body.review === "string" ? req.body.review.trim() : "";
+
+    if (!Number.isInteger(blogId) || blogId < 1) {
+        return res.status(400).json({ error: "Choose a valid blog post." });
+    }
+    if (!Number.isInteger(doctorId) || doctorId < 1) {
+        return res.status(400).json({ error: "Pick the doctor connected to this blog rating." });
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: "Doctor rating must be between 1 and 5." });
+    }
+    if (review.length > 1000) {
+        return res.status(400).json({ error: "Keep the doctor review under 1,000 characters." });
+    }
+
+    const ownership = await pool.query(`SELECT 1 FROM patient_blogpost WHERE patient_id = $1 AND blog_id = $2`, [req.authUser.id, blogId]);
+    if (!ownership.rowCount) {
+        return res.status(404).json({ error: "You can only rate doctors on your own blog post." });
+    }
+
+    const visit = await pool.query(`SELECT 1 FROM completed_appointment_history
+        WHERE patient_id = $1 AND doctor_id = $2`, [req.authUser.id, doctorId]);
+    if (!visit.rowCount) {
+        return res.status(403).json({ error: "You can only rate the doctor you saw in a completed appointment." });
+    }
+
+    const result = await transactionQuery(`INSERT INTO blogpost_doc (blog_id, patient_id, doctor_id, rating, review)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (blog_id, patient_id, doctor_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP
+        RETURNING blogpost_doc_id`,
+    [blogId, req.authUser.id, doctorId, rating, review || null]);
+    res.status(201).json({ message: "Doctor rating added to this blog post.", rating: result.rows[0] });
+}));
+
+app.post("/api/blogs/:id/rate-hospital", requireRole("Patient"), asyncRoute(async (req, res) => {
+    const blogId = Number(req.params.id);
+    const hospitalId = Number(req.body.hospital_id);
+    const rating = Number(req.body.rating);
+    const review = typeof req.body.review === "string" ? req.body.review.trim() : "";
+
+    if (!Number.isInteger(blogId) || blogId < 1) {
+        return res.status(400).json({ error: "Choose a valid blog post." });
+    }
+    if (!Number.isInteger(hospitalId) || hospitalId < 1) {
+        return res.status(400).json({ error: "Pick the hospital connected to this blog rating." });
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: "Hospital rating must be between 1 and 5." });
+    }
+    if (review.length > 1000) {
+        return res.status(400).json({ error: "Keep the hospital review under 1,000 characters." });
+    }
+
+    const ownership = await pool.query(`SELECT 1 FROM patient_blogpost WHERE patient_id = $1 AND blog_id = $2`, [req.authUser.id, blogId]);
+    if (!ownership.rowCount) {
+        return res.status(404).json({ error: "You can only rate hospitals on your own blog post." });
+    }
+
+    const visit = await pool.query(`SELECT 1 FROM completed_appointment_history h
+        LEFT JOIN doctor_hospital dh ON dh.doctor_id = h.doctor_id AND h.hospital_id IS NULL
+        WHERE h.patient_id = $1 AND COALESCE(h.hospital_id, dh.hospital_id) = $2`, [req.authUser.id, hospitalId]);
+    if (!visit.rowCount) {
+        return res.status(403).json({ error: "You can only rate the hospital that provided your completed appointment service." });
+    }
+
+    const result = await transactionQuery(`INSERT INTO blogpost_hospital (blog_id, patient_id, hospital_id, rating, review)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (blog_id, patient_id, hospital_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP
+        RETURNING blog_id`,
+    [blogId, req.authUser.id, hospitalId, rating, review || null]);
+    res.status(201).json({ message: "Hospital rating added to this blog post.", rating: result.rows[0] });
 }));
 
 app.get("/api/admin/blog-submissions", requireRole("Admin"), asyncRoute(async (_req, res) => {
@@ -1548,7 +1862,7 @@ app.get("*splat", (_req, res) =>
    START SERVER
    ========================= */
 
-initializeAuthSecret().then(initializeBlogSubmissions).then(initializeLearnArticles).then(initializeContentUpdates).then(initializeDoctorApplications).then(initializeAppointments).then(initializePrescriptionAppointments).then(initializeDatabaseRoutines).then(() => {
+initializeAuthSecret().then(initializeBlogSubmissions).then(initializeLearnArticles).then(initializeContentUpdates).then(initializeDoctorApplications).then(initializeAppointments).then(initializeRatings).then(initializePrescriptionAppointments).then(initializeDatabaseRoutines).then(() => {
     app.listen(PORT, () => {
         console.log(`CancerCare is running at http://localhost:${PORT}`);
         console.log(`Swagger API docs: http://localhost:${PORT}/api-docs`);

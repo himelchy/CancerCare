@@ -101,11 +101,11 @@ AS $$
 BEGIN
     IF OLD.status IS DISTINCT FROM NEW.status AND NEW.status = 'completed' THEN
         INSERT INTO completed_appointment_history (
-            appointment_id, patient_id, doctor_id, reason, requested_date,
+            appointment_id, patient_id, doctor_id, hospital_id, reason, requested_date,
             appointment_date, requested_at, marked_available_at, assigned_by,
             assigned_at, completed_at, archived_at
         ) VALUES (
-            NEW.appointment_id, NEW.patient_id, NEW.doctor_id, NEW.reason,
+            NEW.appointment_id, NEW.patient_id, NEW.doctor_id, NEW.hospital_id, NEW.reason,
             NEW.requested_date, NEW.appointment_date, NEW.requested_at,
             NEW.marked_available_at, NEW.assigned_by, NEW.assigned_at,
             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -151,6 +151,45 @@ AS $$
         (SELECT COUNT(*)::INTEGER FROM content_update_submissions WHERE status = 'pending');
 $$;
 
+-- Keep doctors.rating equal to the average of patient ratings from visits and stories.
+ALTER TABLE doctors ADD COLUMN IF NOT EXISTS rating NUMERIC(3,2) NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION refresh_doctor_rating_average()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    affected_doctor_id INTEGER;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        affected_doctor_id := OLD.doctor_id;
+    ELSE
+        affected_doctor_id := NEW.doctor_id;
+    END IF;
+    UPDATE doctors d SET rating = COALESCE((
+        SELECT ROUND(AVG(all_ratings.rating)::numeric, 2)
+        FROM (
+            SELECT rating FROM doctor_ratings WHERE doctor_id = affected_doctor_id
+            UNION ALL
+            SELECT rating FROM blogpost_doc WHERE doctor_id = affected_doctor_id
+        ) all_ratings
+    ), 0)
+    WHERE d.doctor_id = affected_doctor_id;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS doctor_rating_average_from_visits ON doctor_ratings;
+CREATE TRIGGER doctor_rating_average_from_visits
+AFTER INSERT OR UPDATE OR DELETE ON doctor_ratings
+FOR EACH ROW EXECUTE FUNCTION refresh_doctor_rating_average();
+
+DROP TRIGGER IF EXISTS doctor_rating_average_from_stories ON blogpost_doc;
+CREATE TRIGGER doctor_rating_average_from_stories
+AFTER INSERT OR UPDATE OR DELETE ON blogpost_doc
+FOR EACH ROW EXECUTE FUNCTION refresh_doctor_rating_average();
+
 -- Publish a patient story and link it to its author as one database operation.
 CREATE OR REPLACE PROCEDURE approve_blog_submission(
     p_submission_id INTEGER,
@@ -177,6 +216,22 @@ BEGIN
 
     INSERT INTO patient_blogpost (patient_id, blog_id, write_date)
     VALUES (submission_row.patient_id, new_blog_id, CURRENT_DATE);
+
+    IF submission_row.doctor_id IS NOT NULL AND submission_row.doctor_rating IS NOT NULL THEN
+        INSERT INTO blogpost_doc (blog_id, patient_id, doctor_id, rating, review)
+        VALUES (new_blog_id, submission_row.patient_id, submission_row.doctor_id,
+                submission_row.doctor_rating, submission_row.doctor_review)
+        ON CONFLICT (blog_id, patient_id, doctor_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP;
+    END IF;
+
+    IF submission_row.hospital_id IS NOT NULL AND submission_row.hospital_rating IS NOT NULL THEN
+        INSERT INTO blogpost_hospital (blog_id, patient_id, hospital_id, rating, review)
+        VALUES (new_blog_id, submission_row.patient_id, submission_row.hospital_id,
+                submission_row.hospital_rating, submission_row.hospital_review)
+        ON CONFLICT (blog_id, patient_id, hospital_id)
+        DO UPDATE SET rating = EXCLUDED.rating, review = EXCLUDED.review, created_at = CURRENT_TIMESTAMP;
+    END IF;
 
     UPDATE blog_submissions
     SET status = 'approved', reviewed_by = p_admin_id,
